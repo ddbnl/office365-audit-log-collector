@@ -38,7 +38,7 @@ https://docs.microsoft.com/en-us/azure/active-directory/develop/active-directory
 ### Running the script:
 
 - Retrieve all logs and send to a network socket / Graylog server:
-`python3 AuditLogCollector.py 'tenant_id' 'client_key' 'secret_key' --exchange --dlp --azure_ad --general --sharepoint -p 'random_publisher_id' -g -gA logging.mooiland.nl -gP 6000`
+`python3 AuditLogCollector.py 'tenant_id' 'client_key' 'secret_key' --exchange --dlp --azure_ad --general --sharepoint -p 'random_publisher_id' -g -gA 10.10.10.1 -gP 6000`
 
 #### Script options:
 ```
