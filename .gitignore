@@ -59,3 +59,5 @@ target/
 
 \.idea/
 venv/
+
+known_content

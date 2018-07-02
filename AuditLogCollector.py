@@ -31,7 +31,7 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         self._graylog_interface = GraylogInterface.GraylogInterface(graylog_address=graylog_address,
                                                                     graylog_port=graylog_port)
 
-        self.blobs_to_collects = deque()
+        self.blobs_to_collect = deque()
         self.monitor_thread = threading.Thread()
         self.retrieve_available_content_threads = deque()
         self.retrieve_content_threads = deque()
@@ -48,7 +48,7 @@ class AuditLogCollector(ApiConnection.ApiConnection):
     @property
     def done_retrieving_content(self):
 
-        return not bool(self.blobs_to_collects)
+        return not bool(self.blobs_to_collect)
 
     @property
     def done_collecting_available_content(self):
@@ -88,14 +88,14 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         start_time = str(current_time - datetime.timedelta(hours=1)).replace(' ', 'T').rsplit('.', maxsplit=1)[0]
         response = self.make_api_request(url='subscriptions/content?contentType={0}&startTime={1}&endTime={2}'.format(
             content_type, start_time, end_time))
-        self.blobs_to_collects += response.json()
+        self.blobs_to_collect += response.json()
         while 'NextPageUri' in response.headers.keys() and response.headers['NextPageUri']:
             logging.log(level=logging.DEBUG, msg='Getting next page of content for type: "{0}"'.format(content_type))
-            self.blobs_to_collects += response.json()
+            self.blobs_to_collect += response.json()
             response = self.make_api_request(url=response.headers['NextPageUri'], append_url=False)
         self.content_types.remove(content_type)
         logging.log(level=logging.DEBUG, msg='Got {0} content blobs of type: "{1}"'.format(
-            len(self.blobs_to_collects), content_type))
+            len(self.blobs_to_collect), content_type))
 
     def monitor_blobs_to_collect(self):
         """
@@ -105,13 +105,14 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         self._graylog_interface.start()
         threads = deque()
         while not (self.done_collecting_available_content and self.done_retrieving_content):
-            if not self.blobs_to_collects:
+            if not self.blobs_to_collect:
                 continue
-            blob_json = self.blobs_to_collects.popleft()
-            logging.log(level=logging.DEBUG, msg='Retrieving content blob: "{0}"'.format(blob_json['contentUri']))
-            threads.append(threading.Thread(target=self.retrieve_content, daemon=True,
-                                            kwargs={'content_json': blob_json}))
-            threads[-1].start()
+            blob_json = self.blobs_to_collect.popleft()
+            if blob_json:
+                logging.log(level=logging.DEBUG, msg='Retrieving content blob: "{0}"'.format(blob_json))
+                threads.append(threading.Thread(target=self.retrieve_content, daemon=True,
+                                                kwargs={'content_json': blob_json}))
+                threads[-1].start()
         self._graylog_interface.stop()
 
     def retrieve_content(self, content_json, send_to_graylog=True, save_as_file=False):
@@ -222,6 +223,8 @@ if __name__ == "__main__":
                         dest='graylog_addr')
     parser.add_argument('-gP', metavar='graylog_port', type=str, help='Port of graylog server.', action='store',
                         dest='graylog_port')
+    parser.add_argument('-d', action='store_true', dest='debug_logging',
+                        help='Enable debug logging (generates large log files and decreases performance).')
     args = parser.parse_args()
     argsdict = vars(args)
 
@@ -237,7 +240,8 @@ if __name__ == "__main__":
     if argsdict['dlp']:
         content_types.append('DLP.All')
 
-    logging.basicConfig(filemode='w', filename=argsdict['log_path'], level=logging.DEBUG)
+    logging.basicConfig(filemode='w', filename=argsdict['log_path'],
+                        level=logging.INFO if not argsdict['debug_logging'] else logging.DEBUG)
     logging.log(level=logging.INFO, msg='Starting run @ {0}'.format(datetime.datetime.now()))
 
     collector = AuditLogCollector(output_path=argsdict['output_path'], tenant_id=argsdict['tenant_id'],
