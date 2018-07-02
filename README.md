@@ -35,6 +35,16 @@ https://docs.microsoft.com/en-us/azure/active-directory/develop/active-directory
 - Use the 'AuditLogSubscriber' script to subscribe to the audit API's of your choice
 - You can now run the script and retrieve logs. 
 
+
+### (optional) Creating a Graylog input
+
+If you are running this script to get audit events in Graylog you will need to create a Graylog input. If not, just skip this.
+
+- Create a 'raw/plaintext TCP' input;
+- Enter the IP and port you want to receive the logs on (you can use these in the script);
+- All other settings can be left default.
+
+
 ### Running the script:
 
 - Retrieve all logs and send to a network socket / Graylog server:
