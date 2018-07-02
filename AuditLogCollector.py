@@ -108,7 +108,7 @@ class AuditLogCollector(ApiConnection.ApiConnection):
             if not self.blobs_to_collect:
                 continue
             blob_json = self.blobs_to_collect.popleft()
-            if blob_json:
+            if blob_json and 'contentUri' in blob_json:
                 logging.log(level=logging.DEBUG, msg='Retrieving content blob: "{0}"'.format(blob_json))
                 threads.append(threading.Thread(target=self.retrieve_content, daemon=True,
                                                 kwargs={'content_json': blob_json}))
