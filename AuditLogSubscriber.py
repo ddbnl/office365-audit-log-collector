@@ -45,8 +45,8 @@ class AuditLogSubscriber(ApiConnection.ApiConnection):
             action = 'start'
         else:
             return
-        status = self.make_api_request(url='/subscriptions/{0}?contentType={0}'.format(action, ctype_stat[0]),
-                                       append_url=True)
+        status = self.make_api_request(url='subscriptions/{0}?contentType={1}'.format(action, ctype_stat[0]),
+                                       append_url=True, get=False)
 
     def interactive(self):
 

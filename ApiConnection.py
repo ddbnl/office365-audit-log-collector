@@ -54,7 +54,7 @@ class ApiConnection(object):
             logging.log(level=logging.ERROR, msg='Error logging in: "{0}"'.format(e))
             sys.exit(1)
 
-    def make_api_request(self, url, append_url=True):
+    def make_api_request(self, url, append_url=True, get=True):
         """
         Make an API requests by appending the resource to the base URL. E.g. url='subscriptions/list'.
         Disable append_url to make the call to the literal passed URL.
@@ -68,6 +68,10 @@ class ApiConnection(object):
             url = '{0}{1}PublisherIdentifier={2}'.format(
                 url,  '?' if '?' not in url.split('/')[-1] else '&', self.publisher_id if self.publisher_id else '')
         logging.log(level=logging.DEBUG, msg='Making API request using URL: "{0}"'.format(url))
-        status = requests.get(url, headers=self.headers, verify=False, timeout=120)
+        if get:
+            status = requests.get(url, headers=self.headers, verify=False, timeout=120)
+        else:
+            status = requests.post(url, headers=self.headers, verify=False, timeout=120)
         return status
+
 

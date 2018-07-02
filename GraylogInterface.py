@@ -59,8 +59,6 @@ class GraylogInterface(object):
             return
         sock = self._connect_to_graylog_input()
         try:
-            import pdb
-            pdb.set_trace()
             sock.sendall(msg_string.encode())
         except:
             sock.close()
