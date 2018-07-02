@@ -67,6 +67,7 @@ optional arguments:
   -g                    Output to graylog.
   -gA graylog_address   Address of graylog server.
   -gP graylog_port      Port of graylog server.
+  -d                    Enable debug logging (large log files and lower performance)
 ```
 
 ## Todo:
