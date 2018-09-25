@@ -21,6 +21,9 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         blobs and output them to a file or Graylog input (i.e. send over a socket).
         :param output_path: path to output retrieved logs to (None=no file output) (string)
         :param content_types: list of content types to retrieve (e.g. 'Audit.Exchange', 'Audit.Sharepoint')
+        :param graylog_address: IP/Hostname of Graylog server to output audit logs to (str)
+        :param graylog_port: port of Graylog server to output audit logs to (int)
+        :param file_output: path of file to output audit logs to (str)
         """
         super().__init__(*args, **kwargs)
         self.file_output = file_output
@@ -223,6 +226,8 @@ if __name__ == "__main__":
                         dest='graylog_addr')
     parser.add_argument('-gP', metavar='graylog_port', type=str, help='Port of graylog server.', action='store',
                         dest='graylog_port')
+    parser.add_argument('-s', action='store_true', dest='secure',
+                        help='Verify remote SSL certificates (default setting skips SSL verification)')
     parser.add_argument('-d', action='store_true', dest='debug_logging',
                         help='Enable debug logging (generates large log files and decreases performance).')
     args = parser.parse_args()
@@ -248,7 +253,8 @@ if __name__ == "__main__":
                                   secret_key=argsdict['secret_key'], client_key=argsdict['client_key'],
                                   content_types=content_types, graylog_address=argsdict['graylog_addr'],
                                   graylog_port=argsdict['graylog_port'], graylog_output=argsdict['graylog'],
-                                  file_output=argsdict['file'], publisher_id=argsdict['publisher_id'])
+                                  file_output=argsdict['file'], publisher_id=argsdict['publisher_id'],
+                                  secure=argsdict['secure'])
     collector.run_once()
 
 
