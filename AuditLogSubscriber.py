@@ -55,9 +55,6 @@ class AuditLogSubscriber(ApiConnection.ApiConnection):
         print('=' * 60)
         print('Please enter the required data.\n')
 
-        print(('Verify remote certicates? (requires the included Microsoft certifcates to be trusted):\n'))
-        self.secure = self.get_info('Yes/No: ')
-        self.secure = True if self.secure.lower().strip() == 'yes' else False
         print(('The Tenant ID is listed under Azure Active Directory | '
                 'Properties and labeled "Directory ID".\nExample: '
                 'cb6997bf-4029-455f-9f7a-e76fee8881da\n'))

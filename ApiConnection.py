@@ -6,7 +6,7 @@ import logging
 
 class ApiConnection(object):
 
-    def __init__(self, tenant_id=None, client_key=None, secret_key=None, publisher_id=None, secure=False):
+    def __init__(self, tenant_id=None, client_key=None, secret_key=None, publisher_id=None):
         """
         Object that creates the authorization headers for- and sends API requests to the Microsoft Office APIs'.
         Taken from a Microsoft sample script that I cannot find the original of to reference.
@@ -20,9 +20,7 @@ class ApiConnection(object):
         self.client_key = client_key
         self.secret_key = secret_key
         self.publisher_id = publisher_id
-        self.secure = secure
         self._headers = None
-        requests.packages.urllib3.disable_warnings()
 
     @property
     def headers(self):
@@ -45,9 +43,7 @@ class ApiConnection(object):
         resource = 'https://manage.office.com'
         data = 'grant_type=client_credentials&client_id={0}&client_secret={1}&resource={2}'.format(
             self.client_key, self.secret_key, resource)
-        r = requests.post(auth_url, headers=headers, data=data,
-                          verify=False if not self.secure else
-                          '/home/daan/code/office audit api collector/office_certs/manageoffice.bundle')
+        r = requests.post(auth_url, headers=headers, data=data, verify=True)
         resp = r.json()
 
         try:
@@ -73,11 +69,9 @@ class ApiConnection(object):
                 url,  '?' if '?' not in url.split('/')[-1] else '&', self.publisher_id if self.publisher_id else '')
         logging.log(level=logging.DEBUG, msg='Making API request using URL: "{0}"'.format(url))
         if get:
-            status = requests.get(url, headers=self.headers, verify=False if not self.secure else
-            '/home/daan/code/office audit api collector/office_certs/manageoffice.bundle', timeout=120)
+            status = requests.get(url, headers=self.headers, verify=True, timeout=120)
         else:
-            status = requests.post(url, headers=self.headers, verify=False if not self.secure else
-            '/home/daan/code/office audit api collector/office_certs/manageoffice.bundle', timeout=120)
+            status = requests.post(url, headers=self.headers, verify=True, timeout=120)
         return status
 
 

@@ -226,8 +226,6 @@ if __name__ == "__main__":
                         dest='graylog_addr')
     parser.add_argument('-gP', metavar='graylog_port', type=str, help='Port of graylog server.', action='store',
                         dest='graylog_port')
-    parser.add_argument('-s', action='store_true', dest='secure',
-                        help='Verify remote SSL certificates (default setting skips SSL verification)')
     parser.add_argument('-d', action='store_true', dest='debug_logging',
                         help='Enable debug logging (generates large log files and decreases performance).')
     args = parser.parse_args()
@@ -253,8 +251,7 @@ if __name__ == "__main__":
                                   secret_key=argsdict['secret_key'], client_key=argsdict['client_key'],
                                   content_types=content_types, graylog_address=argsdict['graylog_addr'],
                                   graylog_port=argsdict['graylog_port'], graylog_output=argsdict['graylog'],
-                                  file_output=argsdict['file'], publisher_id=argsdict['publisher_id'],
-                                  secure=argsdict['secure'])
+                                  file_output=argsdict['file'], publisher_id=argsdict['publisher_id'])
     collector.run_once()
 
 
