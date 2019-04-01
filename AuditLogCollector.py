@@ -116,11 +116,11 @@ class AuditLogCollector(ApiConnection.ApiConnection):
             if blob_json and 'contentUri' in blob_json:
                 logging.log(level=logging.DEBUG, msg='Retrieving content blob: "{0}"'.format(blob_json))
                 threads.append(threading.Thread(target=self.retrieve_content, daemon=True,
-                    kwargs={'content_json': blob_json, 'save_as_file': self.file_output}))
+                    kwargs={'content_json': blob_json, 'save_as_file': self.file_output, 'send_to_graylog': self.graylog_output}))
                 threads[-1].start()
         self._graylog_interface.stop()
 
-    def retrieve_content(self, content_json, send_to_graylog=True, save_as_file=False):
+    def retrieve_content(self, content_json, send_to_graylog=False, save_as_file=False):
         """
         Get an available content blob. If it exists in the list of known content blobs it is skipped to ensure
         idempotence.
