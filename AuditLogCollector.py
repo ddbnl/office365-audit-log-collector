@@ -1,3 +1,5 @@
+#!/usr/bin/python3
+
 # Standard libs
 import os
 import json
@@ -114,7 +116,7 @@ class AuditLogCollector(ApiConnection.ApiConnection):
             if blob_json and 'contentUri' in blob_json:
                 logging.log(level=logging.DEBUG, msg='Retrieving content blob: "{0}"'.format(blob_json))
                 threads.append(threading.Thread(target=self.retrieve_content, daemon=True,
-                                                kwargs={'content_json': blob_json}))
+                    kwargs={'content_json': blob_json, 'save_as_file': self.file_output}))
                 threads[-1].start()
         self._graylog_interface.stop()
 
