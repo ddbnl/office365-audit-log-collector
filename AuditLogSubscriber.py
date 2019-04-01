@@ -70,7 +70,6 @@ class AuditLogSubscriber(ApiConnection.ApiConnection):
                 '\nExample: '
                 'D8perHbL9gAqx4vx5YbuffCDsvz2Pbdswey72FYRDNk=\n'))
         self.secret_key = self.get_info("Enter Secret Key: ")
-        self.secret_key = self.secret_key.replace('+', '%2B')
 
         c = OrderedDict()
         while True:

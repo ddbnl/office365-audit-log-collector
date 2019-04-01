@@ -2,7 +2,7 @@
 import sys
 import requests
 import logging
-
+import urllib.parse
 
 class ApiConnection(object):
 
@@ -37,12 +37,11 @@ class ApiConnection(object):
         Login to get access token and cache it to make API requests with.
         :return: authorization headers (dict)
         """
-        self.secret_key = self.secret_key.replace('+', '%2B') if self.secret_key else self.secret_key
         headers = {'Content-Type': 'application/x-www-form-urlencoded'}
         auth_url = 'https://login.microsoftonline.com/{0}/oauth2/token'.format(self.tenant_id)
         resource = 'https://manage.office.com'
         data = 'grant_type=client_credentials&client_id={0}&client_secret={1}&resource={2}'.format(
-            self.client_key, self.secret_key, resource)
+            self.client_key, urllib.parse.quote(self.secret_key), resource)
         r = requests.post(auth_url, headers=headers, data=data, verify=True)
         resp = r.json()
 
