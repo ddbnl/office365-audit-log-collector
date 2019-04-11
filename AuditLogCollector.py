@@ -116,6 +116,9 @@ class AuditLogCollector(ApiConnection.ApiConnection):
                 threads.append(threading.Thread(target=self.retrieve_content, daemon=True,
                                                 kwargs={'content_json': blob_json}))
                 threads[-1].start()
+
+        for t in threads:
+            t.join()
         self._graylog_interface.stop()
 
     def retrieve_content(self, content_json, send_to_graylog=True, save_as_file=False):
@@ -253,5 +256,3 @@ if __name__ == "__main__":
                                   graylog_port=argsdict['graylog_port'], graylog_output=argsdict['graylog'],
                                   file_output=argsdict['file'], publisher_id=argsdict['publisher_id'])
     collector.run_once()
-
-
