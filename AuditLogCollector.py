@@ -31,9 +31,9 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         self.output_path = output_path
         self.content_types = content_types
         self._known_content = {}
-        self._graylog_interface = GraylogInterface.GraylogInterface(graylog_address=graylog_address,
-                                                                    graylog_port=graylog_port)
-
+        if self.graylog_output:
+            self._graylog_interface = GraylogInterface.GraylogInterface(graylog_address=graylog_address,
+                                                                        graylog_port=graylog_port)
         self.blobs_to_collect = deque()
         self.monitor_thread = threading.Thread()
         self.retrieve_available_content_threads = deque()
@@ -105,7 +105,8 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         Wait for the 'retrieve_available_content' function to retrieve content URI's. Once they become available
         start retrieving in a background thread.
         """
-        self._graylog_interface.start()
+        if self.graylog_output:
+            self._graylog_interface.start()
         threads = deque()
         while not (self.done_collecting_available_content and self.done_retrieving_content):
             if not self.blobs_to_collect:
@@ -119,9 +120,11 @@ class AuditLogCollector(ApiConnection.ApiConnection):
 
         for t in threads:
             t.join()
-        self._graylog_interface.stop()
 
-    def retrieve_content(self, content_json, send_to_graylog=True, save_as_file=False):
+        if self.graylog_output:
+            self._graylog_interface.stop()
+
+    def retrieve_content(self, content_json):
         """
         Get an available content blob. If it exists in the list of known content blobs it is skipped to ensure
         idempotence.
@@ -141,9 +144,9 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         else:
             self._add_known_content(content_id=content_json['contentId'],
                                     content_expiration=content_json['contentExpiration'])
-            if save_as_file:
+            if self.file_output:
                 self.output_results_to_file(results=result, content_id=content_json['contentId'])
-            if send_to_graylog:
+            if self.graylog_output:
                 self._graylog_interface.send_messages_to_graylog(*result)
 
     def output_results_to_file(self, results, content_id):
