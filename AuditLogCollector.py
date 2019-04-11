@@ -38,6 +38,7 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         self.monitor_thread = threading.Thread()
         self.retrieve_available_content_threads = deque()
         self.retrieve_content_threads = deque()
+        self.init_content_available_notification(len(content_types))
 
     def run_once(self):
         """
@@ -47,6 +48,11 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         self.start_monitoring()
         self.get_all_available_content()
         self.monitor_thread.join()
+
+    def init_content_available_notification(self, length):
+        self.content_available = threading.Semaphore(length)
+        for _ in range(length):
+            self.content_available.acquire()
 
     @property
     def done_retrieving_content(self):
@@ -85,20 +91,25 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         Make a call to retrieve avaialble content blobs for a content type in a thread. If the response contains a
         'NextPageUri' there is more content to be retrieved; rerun until all has been retrieved.
         """
-        logging.log(level=logging.DEBUG, msg='Getting available content for type: "{0}"'.format(content_type))
-        current_time = datetime.datetime.now(datetime.timezone.utc)
-        end_time = str(current_time).replace(' ', 'T').rsplit('.', maxsplit=1)[0]
-        start_time = str(current_time - datetime.timedelta(hours=1)).replace(' ', 'T').rsplit('.', maxsplit=1)[0]
-        response = self.make_api_request(url='subscriptions/content?contentType={0}&startTime={1}&endTime={2}'.format(
-            content_type, start_time, end_time))
-        self.blobs_to_collect += response.json()
-        while 'NextPageUri' in response.headers.keys() and response.headers['NextPageUri']:
-            logging.log(level=logging.DEBUG, msg='Getting next page of content for type: "{0}"'.format(content_type))
+        try:
+            logging.log(level=logging.DEBUG, msg='Getting available content for type: "{0}"'.format(content_type))
+            current_time = datetime.datetime.now(datetime.timezone.utc)
+            end_time = str(current_time).replace(' ', 'T').rsplit('.', maxsplit=1)[0]
+            start_time = str(current_time - datetime.timedelta(hours=1)).replace(' ', 'T').rsplit('.', maxsplit=1)[0]
+            response = self.make_api_request(url='subscriptions/content?contentType={0}&startTime={1}&endTime={2}'.format(
+                content_type, start_time, end_time))
             self.blobs_to_collect += response.json()
-            response = self.make_api_request(url=response.headers['NextPageUri'], append_url=False)
-        self.content_types.remove(content_type)
-        logging.log(level=logging.DEBUG, msg='Got {0} content blobs of type: "{1}"'.format(
-            len(self.blobs_to_collect), content_type))
+            while 'NextPageUri' in response.headers.keys() and response.headers['NextPageUri']:
+                logging.log(level=logging.DEBUG, msg='Getting next page of content for type: "{0}"'.format(content_type))
+                self.blobs_to_collect += response.json()
+                response = self.make_api_request(url=response.headers['NextPageUri'], append_url=False)
+            logging.log(level=logging.DEBUG, msg='Got {0} content blobs of type: "{1}"'.format(
+                len(self.blobs_to_collect), content_type))
+        except Exception as e:
+            logging.log(level=logging.DEBUG, msg="Error while get_available_content: {0} : {1}".format(content_type, str(e)))
+        finally:
+            self.content_types.remove(content_type)
+            self.content_available.release()
 
     def monitor_blobs_to_collect(self):
         """
@@ -108,9 +119,11 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         if self.graylog_output:
             self._graylog_interface.start()
         threads = deque()
-        while not (self.done_collecting_available_content and self.done_retrieving_content):
+        while not self.done_collecting_available_content:
+            self.content_available.acquire()
             if not self.blobs_to_collect:
                 continue
+
             blob_json = self.blobs_to_collect.popleft()
             if blob_json and 'contentUri' in blob_json:
                 logging.log(level=logging.DEBUG, msg='Retrieving content blob: "{0}"'.format(blob_json))
