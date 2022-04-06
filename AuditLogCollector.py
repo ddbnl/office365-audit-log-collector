@@ -14,8 +14,8 @@ import ApiConnection
 
 class AuditLogCollector(ApiConnection.ApiConnection):
 
-    def __init__(self, output_path, content_types, *args, graylog_address=None, graylog_port=None, graylog_output=False,
-                 file_output=False, **kwargs):
+    def __init__(self, content_types, *args, output_path=None, graylog_address=None, graylog_port=None,
+                 graylog_output=False, file_output=False, **kwargs):
         """
         Object that can retrieve all available content blobs for a list of content types and then retrieve those
         blobs and output them to a file or Graylog input (i.e. send over a socket).
@@ -105,9 +105,13 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         Wait for the 'retrieve_available_content' function to retrieve content URI's. Once they become available
         start retrieving in a background thread.
         """
-        self._graylog_interface.start()
+        if self.graylog_output:
+            self._graylog_interface.start()
         threads = deque()
-        while not (self.done_collecting_available_content and self.done_retrieving_content):
+        while True:
+            threads = [thread for thread in threads if thread.is_alive()]
+            if self.done_collecting_available_content and self.done_retrieving_content and not threads:
+                return
             if not self.blobs_to_collect:
                 continue
             blob_json = self.blobs_to_collect.popleft()
@@ -116,15 +120,14 @@ class AuditLogCollector(ApiConnection.ApiConnection):
                 threads.append(threading.Thread(target=self.retrieve_content, daemon=True,
                                                 kwargs={'content_json': blob_json}))
                 threads[-1].start()
-        self._graylog_interface.stop()
+        if self.graylog_output:
+            self._graylog_interface.stop()
 
-    def retrieve_content(self, content_json, send_to_graylog=True, save_as_file=False):
+    def retrieve_content(self, content_json):
         """
         Get an available content blob. If it exists in the list of known content blobs it is skipped to ensure
         idempotence.
         :param content_json: JSON dict of the content blob as retrieved from the API (dict)
-        :param send_to_graylog: send the messages to a Graylog input after receiving (Bool)
-        :param save_as_file: save the messages to a file after receiving (Bool)
         :return:
         """
         if self.known_content and content_json['contentId'] in self.known_content:
@@ -133,26 +136,27 @@ class AuditLogCollector(ApiConnection.ApiConnection):
             result = self.make_api_request(url=content_json['contentUri'], append_url=False).json()
             if not result:
                 return
-        except:
+        except Exception as e:
+            logging.error("Error retrieving content: {}".format(e))
             return
         else:
             self._add_known_content(content_id=content_json['contentId'],
                                     content_expiration=content_json['contentExpiration'])
-            if save_as_file:
+            if self.file_output:
                 self.output_results_to_file(results=result, content_id=content_json['contentId'])
-            if send_to_graylog:
+            if self.graylog_output:
                 self._graylog_interface.send_messages_to_graylog(*result)
 
-    def output_results_to_file(self, results, content_id):
+    def output_results_to_file(self, results):
         """
         Dump received JSON messages to a file.
         :param results: retrieved JSON (dict)
         :param content_id: ID of the content blob to avoid duplicates (string)
         """
-        if not os.path.exists(self.output_path):
+        if not os.path.exists(os.path.split(self.output_path)[0]):
             os.mkdir(self.output_path)
-        with open(os.path.join(self.output_path, str(content_id)), 'w') as ofile:
-            json.dump(obj=results, fp=ofile)
+        with open(self.output_path, 'a') as ofile:
+            ofile.write("{}\n".format(json.dump(obj=results, fp=ofile)))
 
     def _add_known_content(self, content_id, content_expiration):
         """

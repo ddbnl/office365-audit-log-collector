@@ -47,6 +47,7 @@ class AuditLogSubscriber(ApiConnection.ApiConnection):
             return
         status = self.make_api_request(url='subscriptions/{0}?contentType={1}'.format(action, ctype_stat[0]),
                                        append_url=True, get=False)
+        logging.info("Set sub status response: {}".format(status.json()))
 
     def interactive(self):
 
@@ -55,22 +56,23 @@ class AuditLogSubscriber(ApiConnection.ApiConnection):
         print('=' * 60)
         print('Please enter the required data.\n')
 
-        print(('The Tenant ID is listed under Azure Active Directory | '
-                'Properties and labeled "Directory ID".\nExample: '
-                'cb6997bf-4029-455f-9f7a-e76fee8881da\n'))
-        self.tenant_id = self.get_info('Enter Tenant ID: ')
-
-        print(('\nThe Client Key is available after app registration and labeled "Application ID"'
-                'App Registrations | <ESM App Name> | Application ID'
-                '\nExample: '
-                '553dd2ba-251b-47d5-893d-2f7ab26adf19\n'))
-        self.client_key = self.get_info('Enter Client Key: ')
-
-        print(('\nThe Secret Key is accessible only one time after the App has been registered:'
-                '\nExample: '
-                'D8perHbL9gAqx4vx5YbuffCDsvz2Pbdswey72FYRDNk=\n'))
-        self.secret_key = self.get_info("Enter Secret Key: ")
-        self.secret_key = self.secret_key.replace('+', '%2B')
+        if not self.tenant_id:
+            print(('The Tenant ID is listed under Azure Active Directory | '
+                    'Properties and labeled "Directory ID".\nExample: '
+                    'cb6997bf-4029-455f-9f7a-e76fee8881da\n'))
+            self.tenant_id = self.get_info('Enter Tenant ID: ')
+        if not self.client_key:
+            print(('\nThe Client Key is available after app registration and labeled "Application ID"'
+                    'App Registrations | <ESM App Name> | Application ID'
+                    '\nExample: '
+                    '553dd2ba-251b-47d5-893d-2f7ab26adf19\n'))
+            self.client_key = self.get_info('Enter Client Key: ')
+        if not self.secret_key:
+            print(('\nThe Secret Key is accessible only one time after the App has been registered:'
+                    '\nExample: '
+                    'D8perHbL9gAqx4vx5YbuffCDsvz2Pbdswey72FYRDNk=\n'))
+            self.secret_key = self.get_info("Enter Secret Key: ")
+            self.secret_key = self.secret_key.replace('+', '%2B')
 
         c = OrderedDict()
         while True:

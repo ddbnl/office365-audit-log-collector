@@ -4,6 +4,19 @@ Subscribe to and collect logs from Office365 auditing APIs (https://msdn.microso
 Currently has the option to output to a network socket (when using e.g. Graylog) or a file. 
 Feel free to contribute other outputs if you happen to build any. Default behavior is to retrieve logs of the last 24 hours.
 
+## Roadmap:
+
+I was unable to work on this repo for a while. Now that I'm back I want to make some improvements and add some features:
+- Add Azure Analytics Workspace output
+- Clear backlog of issues
+- Add start- and end date parameter
+- Keep track of when script last ran, automatically adjust start date to that that moment (so as not to miss any logs)
+
+## Latest changes:
+  - Fixed bug where script exited prematurely
+  - Don't start graylog output unnecessarily
+  - Fixed file output
+
 ## Use cases:
 
 - Ad-lib log retrieval;
@@ -28,11 +41,15 @@ run AuditLogSubscription script and follow the instructions).
 ## Instructions:
 
 ### Creating an application in Azure:
-- Create the 'Web app / API' type app by following these instructions: 
-https://docs.microsoft.com/en-us/azure/active-directory/develop/active-directory-integrating-applications#adding-an-application
-- Grant your new app permissions to read the Office API's: 
-https://docs.microsoft.com/en-us/azure/active-directory/develop/active-directory-integrating-applications#configure-a-client-application-to-access-web-apis 
+- Create the app registration: 
+  - Create app registration itself under Azure AD (own tenant only works fine for single tenant)
+  - Create app secret (only shown once upon creation, store it somewhere safe)
+  - Grant your new app permissions to read the Office API's: 
+      - Graph: AuditLog.Read.All
+      - Office 365 Management APIs: ActivityFeed.Read
+      - Office 365 Management APIs: ActivityFeed.ReadDlp
 - Use the 'AuditLogSubscriber' script to subscribe to the audit API's of your choice
+  - You will need tenant id, client key and secret key for this
 - You can now run the script and retrieve logs. 
 
 
@@ -79,6 +96,3 @@ optional arguments:
   -gP graylog_port      Port of graylog server.
   -d                    Enable debug logging (large log files and lower performance)
 ```
-
-## Todo:
-- Add parameter start- and end date for log retrieval.
