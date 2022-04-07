@@ -13,9 +13,12 @@ I was unable to work on this repo for a while. Now that I'm back I want to make 
 - Keep track of when script last ran, automatically adjust start date to that that moment (so as not to miss any logs)
 
 ## Latest changes:
-  - Fixed bug where script exited prematurely
-  - Don't start graylog output unnecessarily
-  - Fixed file output
+- Integrated bug fixes from pull requests, thank you!
+  - Fix busy loop when connection problem by @furiel
+  - New urlencoding for client_secret by @kalimer0x00 
+- Fixed bug where script exited prematurely
+- Don't start graylog output unnecessarily
+- Fixed file output
 
 ## Use cases:
 

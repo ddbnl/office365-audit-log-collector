@@ -85,20 +85,25 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         Make a call to retrieve avaialble content blobs for a content type in a thread. If the response contains a
         'NextPageUri' there is more content to be retrieved; rerun until all has been retrieved.
         """
-        logging.log(level=logging.DEBUG, msg='Getting available content for type: "{0}"'.format(content_type))
-        current_time = datetime.datetime.now(datetime.timezone.utc)
-        end_time = str(current_time).replace(' ', 'T').rsplit('.', maxsplit=1)[0]
-        start_time = str(current_time - datetime.timedelta(hours=1)).replace(' ', 'T').rsplit('.', maxsplit=1)[0]
-        response = self.make_api_request(url='subscriptions/content?contentType={0}&startTime={1}&endTime={2}'.format(
-            content_type, start_time, end_time))
-        self.blobs_to_collect += response.json()
-        while 'NextPageUri' in response.headers.keys() and response.headers['NextPageUri']:
-            logging.log(level=logging.DEBUG, msg='Getting next page of content for type: "{0}"'.format(content_type))
+        try:
+            logging.log(level=logging.DEBUG, msg='Getting available content for type: "{0}"'.format(content_type))
+            current_time = datetime.datetime.now(datetime.timezone.utc)
+            end_time = str(current_time).replace(' ', 'T').rsplit('.', maxsplit=1)[0]
+            start_time = str(current_time - datetime.timedelta(hours=1)).replace(' ', 'T').rsplit('.', maxsplit=1)[0]
+            response = self.make_api_request(url='subscriptions/content?contentType={0}&startTime={1}&endTime={2}'.format(
+                content_type, start_time, end_time))
             self.blobs_to_collect += response.json()
-            response = self.make_api_request(url=response.headers['NextPageUri'], append_url=False)
-        self.content_types.remove(content_type)
-        logging.log(level=logging.DEBUG, msg='Got {0} content blobs of type: "{1}"'.format(
-            len(self.blobs_to_collect), content_type))
+            while 'NextPageUri' in response.headers.keys() and response.headers['NextPageUri']:
+                logging.log(level=logging.DEBUG, msg='Getting next page of content for type: "{0}"'.format(content_type))
+                self.blobs_to_collect += response.json()
+                response = self.make_api_request(url=response.headers['NextPageUri'], append_url=False)
+            logging.log(level=logging.DEBUG, msg='Got {0} content blobs of type: "{1}"'.format(
+                len(self.blobs_to_collect), content_type))
+        except Exception as e:
+            logging.log(level=logging.DEBUG, msg="Error while getting available content: {}: {}".format(
+                content_type, e))
+        finally:
+            self.content_types.remove(content_type)
 
     def monitor_blobs_to_collect(self):
         """
@@ -143,7 +148,7 @@ class AuditLogCollector(ApiConnection.ApiConnection):
             self._add_known_content(content_id=content_json['contentId'],
                                     content_expiration=content_json['contentExpiration'])
             if self.file_output:
-                self.output_results_to_file(results=result, content_id=content_json['contentId'])
+                self.output_results_to_file(results=result)
             if self.graylog_output:
                 self._graylog_interface.send_messages_to_graylog(*result)
 
@@ -151,7 +156,6 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         """
         Dump received JSON messages to a file.
         :param results: retrieved JSON (dict)
-        :param content_id: ID of the content blob to avoid duplicates (string)
         """
         if not os.path.exists(os.path.split(self.output_path)[0]):
             os.mkdir(self.output_path)

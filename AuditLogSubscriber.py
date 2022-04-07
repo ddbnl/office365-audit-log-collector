@@ -47,7 +47,7 @@ class AuditLogSubscriber(ApiConnection.ApiConnection):
             return
         status = self.make_api_request(url='subscriptions/{0}?contentType={1}'.format(action, ctype_stat[0]),
                                        append_url=True, get=False)
-        logging.info("Set sub status response: {}".format(status.json()))
+        logging.info("Set sub status response: {}".format(status))
 
     def interactive(self):
 
@@ -55,7 +55,6 @@ class AuditLogSubscriber(ApiConnection.ApiConnection):
         print('This script will enable or disable Office 365 subscriptions.')
         print('=' * 60)
         print('Please enter the required data.\n')
-
         if not self.tenant_id:
             print(('The Tenant ID is listed under Azure Active Directory | '
                     'Properties and labeled "Directory ID".\nExample: '
@@ -72,7 +71,6 @@ class AuditLogSubscriber(ApiConnection.ApiConnection):
                     '\nExample: '
                     'D8perHbL9gAqx4vx5YbuffCDsvz2Pbdswey72FYRDNk=\n'))
             self.secret_key = self.get_info("Enter Secret Key: ")
-            self.secret_key = self.secret_key.replace('+', '%2B')
 
         c = OrderedDict()
         while True:
