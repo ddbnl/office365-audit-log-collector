@@ -8,11 +8,13 @@ Feel free to contribute other outputs if you happen to build any. Default behavi
 
 I was unable to work on this repo for a while. Now that I'm back I want to make some improvements and add some features:
 - Add Azure Analytics Workspace output
-- Clear backlog of issues
-- Add start- and end date parameter
-- Keep track of when script last ran, automatically adjust start date to that that moment (so as not to miss any logs)
+- Automate onboarding as much as possible to make it easier to use
+- Make a container that runs this script
+- Create a tutorial for automatic onboarding + docker container for the easiest way to run this
 
 ## Latest changes:
+- Added parameter to resume from last run time (use to not miss any logs when script hasn't run for a while)
+- Added parameter for amount of hours or days to go back and look for content
 - Integrated bug fixes from pull requests, thank you!
   - Fix busy loop when connection problem by @furiel
   - New urlencoding for client_secret by @kalimer0x00 
@@ -90,6 +92,9 @@ optional arguments:
   --azure_ad            Retrieve Azure AD content
   --sharepoint          Retrieve SharePoint content
   --dlp                 Retrieve DLP content
+  -r                    Resume looking for content from last run time for each content type (takes precedence over -tH and -tD)
+  -tH                   Number of hours to to go back and look for content
+  -tD                   Number of days to to go back and look for content
   -p publisher_id       Publisher GUID to avoid API throttling
   -l log_path           Path of log file
   -f                    Output to file.

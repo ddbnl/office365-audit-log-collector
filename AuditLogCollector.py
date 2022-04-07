@@ -15,38 +15,61 @@ import ApiConnection
 class AuditLogCollector(ApiConnection.ApiConnection):
 
     def __init__(self, content_types, *args, output_path=None, graylog_address=None, graylog_port=None,
-                 graylog_output=False, file_output=False, **kwargs):
+                 graylog_output=False, file_output=False, resume=True, fallback_time=None, **kwargs):
         """
         Object that can retrieve all available content blobs for a list of content types and then retrieve those
         blobs and output them to a file or Graylog input (i.e. send over a socket).
-        :param output_path: path to output retrieved logs to (None=no file output) (string)
         :param content_types: list of content types to retrieve (e.g. 'Audit.Exchange', 'Audit.Sharepoint')
+        :param output_path: path to output retrieved logs to (None=no file output) (string)
         :param graylog_address: IP/Hostname of Graylog server to output audit logs to (str)
         :param graylog_port: port of Graylog server to output audit logs to (int)
         :param file_output: path of file to output audit logs to (str)
+        :param resume: Resume from last known run time for each content type (Bool)
+        :param fallback_time: if no last run times are found to resume from, run from this start time (Datetime)
         """
         super().__init__(*args, **kwargs)
         self.file_output = file_output
         self.graylog_output = graylog_output
         self.output_path = output_path
         self.content_types = content_types
+        self._last_run_times = {}
+        if resume:
+            self.get_last_run_times()
+        self._fallback_time = fallback_time or datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=1)
         self._known_content = {}
         self._graylog_interface = GraylogInterface.GraylogInterface(graylog_address=graylog_address,
                                                                     graylog_port=graylog_port)
-
         self.blobs_to_collect = deque()
         self.monitor_thread = threading.Thread()
         self.retrieve_available_content_threads = deque()
         self.retrieve_content_threads = deque()
 
-    def run_once(self):
+    def run_once(self, start_time=None):
         """
         Check available content and retrieve it, then exit.
         """
         self._clean_known_content()
         self.start_monitoring()
-        self.get_all_available_content()
+        self.get_all_available_content(start_time=start_time)
         self.monitor_thread.join()
+        if self._last_run_times:
+            with open('last_run_times', 'w') as ofile:
+                json.dump(fp=ofile, obj=self._last_run_times)
+
+    def get_last_run_times(self):
+
+        if os.path.exists('last_run_times'):
+            try:
+                with open('last_run_times', 'r') as ofile:
+                    self._last_run_times = json.load(ofile)
+            except Exception as e:
+                logging.error("Could not read last run times file: {}.".format(e))
+            for content_type, last_run_time in self._last_run_times.items():
+                try:
+                    self._last_run_times[content_type] = datetime.datetime.strptime(last_run_time, "%Y-%m-%dT%H:%M:%SZ")
+                except Exception as e:
+                    logging.error("Could not read last run time for content type {}: {}.".format(content_type, e))
+                    del self._last_run_times[content_type]
 
     @property
     def done_retrieving_content(self):
@@ -71,16 +94,22 @@ class AuditLogCollector(ApiConnection.ApiConnection):
 
         self.monitor_thread.join()
 
-    def get_all_available_content(self):
+    def get_all_available_content(self, start_time=None):
         """
         Make a call to retrieve avaialble content blobs for a content type in a thread.
         """
         for content_type in self.content_types.copy():
+            if not start_time:
+                if content_type in self._last_run_times.keys():
+                    start_time = self._last_run_times[content_type]
+                else:
+                    start_time = self._fallback_time
             self.retrieve_available_content_threads.append(threading.Thread(
-                target=self.get_available_content, daemon=True, kwargs={'content_type': content_type}))
+                target=self.get_available_content, daemon=True,
+                kwargs={'content_type': content_type, 'start_time': start_time}))
             self.retrieve_available_content_threads[-1].start()
 
-    def get_available_content(self, content_type):
+    def get_available_content(self, content_type, start_time):
         """
         Make a call to retrieve avaialble content blobs for a content type in a thread. If the response contains a
         'NextPageUri' there is more content to be retrieved; rerun until all has been retrieved.
@@ -88,10 +117,10 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         try:
             logging.log(level=logging.DEBUG, msg='Getting available content for type: "{0}"'.format(content_type))
             current_time = datetime.datetime.now(datetime.timezone.utc)
-            end_time = str(current_time).replace(' ', 'T').rsplit('.', maxsplit=1)[0]
-            start_time = str(current_time - datetime.timedelta(hours=1)).replace(' ', 'T').rsplit('.', maxsplit=1)[0]
+            formatted_end_time = str(current_time).replace(' ', 'T').rsplit('.', maxsplit=1)[0]
+            formatted_start_time = str(start_time).replace(' ', 'T').rsplit('.', maxsplit=1)[0]
             response = self.make_api_request(url='subscriptions/content?contentType={0}&startTime={1}&endTime={2}'.format(
-                content_type, start_time, end_time))
+                content_type, formatted_start_time, formatted_end_time))
             self.blobs_to_collect += response.json()
             while 'NextPageUri' in response.headers.keys() and response.headers['NextPageUri']:
                 logging.log(level=logging.DEBUG, msg='Getting next page of content for type: "{0}"'.format(content_type))
@@ -102,8 +131,10 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         except Exception as e:
             logging.log(level=logging.DEBUG, msg="Error while getting available content: {}: {}".format(
                 content_type, e))
-        finally:
             self.content_types.remove(content_type)
+        else:
+            self.content_types.remove(content_type)
+            self._last_run_times[content_type] = start_time.strftime("%Y-%m-%dT%H:%M:%SZ")
 
     def monitor_blobs_to_collect(self):
         """
@@ -157,8 +188,6 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         Dump received JSON messages to a file.
         :param results: retrieved JSON (dict)
         """
-        if not os.path.exists(os.path.split(self.output_path)[0]):
-            os.mkdir(self.output_path)
         with open(self.output_path, 'a') as ofile:
             ofile.write("{}\n".format(json.dump(obj=results, fp=ofile)))
 
@@ -223,6 +252,13 @@ if __name__ == "__main__":
     parser.add_argument('-p', metavar='publisher_id', type=str, help='Publisher GUID to avoid API throttling',
                         action='store', dest='publisher_id',
                         default=os.path.join(os.path.dirname(__file__), 'AuditLogCollector.log'))
+    parser.add_argument('-r',
+                        help='Look for last run time and resume looking for content from there (takes precedence over '
+                             '-tH and -tD)', action='store_true', dest='resume')
+    parser.add_argument('-tH', metavar='time_hours', type=int, help='Amount of hours to go back and look for content',
+                        action='store', dest='time_hours')
+    parser.add_argument('-tD', metavar='time_days', type=int, help='Amount of days to go back and look for content',
+                        action='store', dest='time_days')
     parser.add_argument('-l', metavar='log_path', type=str, help='Path of log file', action='store', dest='log_path',
                         default=os.path.join(os.path.dirname(__file__), 'AuditLogCollector.log'))
     parser.add_argument('-f', help='Output to file.', action='store_true', dest='file')
@@ -251,6 +287,12 @@ if __name__ == "__main__":
     if argsdict['dlp']:
         content_types.append('DLP.All')
 
+    fallback_time = None
+    if argsdict['time_days']:
+        fallback_time = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=argsdict['time_days'])
+    elif argsdict['time_hours']:
+        fallback_time = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=argsdict['time_hours'])
+
     logging.basicConfig(filemode='w', filename=argsdict['log_path'],
                         level=logging.INFO if not argsdict['debug_logging'] else logging.DEBUG)
     logging.log(level=logging.INFO, msg='Starting run @ {0}'.format(datetime.datetime.now()))
@@ -259,7 +301,9 @@ if __name__ == "__main__":
                                   secret_key=argsdict['secret_key'], client_key=argsdict['client_key'],
                                   content_types=content_types, graylog_address=argsdict['graylog_addr'],
                                   graylog_port=argsdict['graylog_port'], graylog_output=argsdict['graylog'],
-                                  file_output=argsdict['file'], publisher_id=argsdict['publisher_id'])
+                                  file_output=argsdict['file'], publisher_id=argsdict['publisher_id'],
+                                  resume=argsdict['resume'], fallback_time=fallback_time)
+
     collector.run_once()
 
 
