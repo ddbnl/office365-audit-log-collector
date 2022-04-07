@@ -23,7 +23,10 @@ class GraylogInterface(object):
 
     def stop(self, gracefully=True):
 
-        self.queue.insert(0 if not gracefully else -1, 'stop monitor thread')
+        if gracefully:
+            self.queue.append('stop monitor thread')
+        else:
+            self.queue.appendleft('stop monitor thread')
         if self.monitor_thread.is_alive():
             self.monitor_thread.join()
 
