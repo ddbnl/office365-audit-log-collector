@@ -1,8 +1,10 @@
 # Standard libs
+from collections import deque
+import logging
+import threading
 import socket
 import json
-from collections import deque
-import threading
+import time
 
 
 class GraylogInterface(object):
@@ -48,7 +50,7 @@ class GraylogInterface(object):
         s.connect((self.gl_address, int(self.gl_port)))
         return s
 
-    def _send_message_to_graylog(self, msg):
+    def _send_message_to_graylog(self, msg, retries=3):
         """
         Send a single message to a graylog input; the socket must be closed after each individual message,
         otherwise Graylog will interpret it as a single large message.
@@ -57,10 +59,22 @@ class GraylogInterface(object):
         msg_string = json.dumps(msg)
         if not msg_string:
             return
-        sock = self._connect_to_graylog_input()
+        while True:
+            try:
+                sock = self._connect_to_graylog_input()
+            except OSError as e:  # For issue: OSError: [Errno 99] Cannot assign requested address #6
+                if retries:
+                    logging.error("Error connecting to graylog: {}. Retrying {} more times".format(e, retries))
+                    retries -= 1
+                    time.sleep(30)
+                else:
+                    logging.error("Error connecting to graylog: {}. Giving up for this message: {}".format(
+                        e, msg_string))
+                    return
+            else:
+                break
         try:
             sock.sendall(msg_string.encode())
-        except:
-            sock.close()
-        else:
-            sock.close()
+        except Exception as e:
+            logging.error("Error sending message to graylog: {}.".format(e))
+        sock.close()
