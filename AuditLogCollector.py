@@ -179,7 +179,7 @@ class AuditLogCollector(ApiConnection.ApiConnection):
                 break
             if not self.blobs_to_collect:
                 continue
-            for content_type, blobs_to_collect in self.blobs_to_collect.items():
+            for content_type, blobs_to_collect in self.blobs_to_collect.copy().items():
                 if self.blobs_to_collect[content_type]:
                     blob_json = self.blobs_to_collect[content_type].popleft()
                     if blob_json and 'contentUri' in blob_json:

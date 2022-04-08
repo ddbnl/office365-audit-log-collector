@@ -71,12 +71,13 @@ class AzureOMSInterface:
         otherwise Graylog will interpret it as a single large message.
         :param msg: dict
         """
+        time_generated = msg['CreationTime']
         msg_string = json.dumps(msg)
         if not msg_string:
             return
         while True:
             try:
-                self.post_data(body=msg_string, log_type=content_type.replace('.', ''))
+                self.post_data(body=msg_string, log_type=content_type.replace('.', ''), time_generated=time_generated)
             except Exception as e:
                 logging.error("Error sending to OMS: {}. Retries left: {}".format(e, retries))
                 if retries:
@@ -91,7 +92,9 @@ class AzureOMSInterface:
                 break
 
     def build_signature(self, date, content_length, method, content_type, resource):
-        """Returns authorization header which will be used when sending data into Azure Log Analytics"""
+        """
+        Returns authorization header which will be used when sending data into Azure Log Analytics.
+        """
 
         x_headers = 'x-ms-date:' + date
         string_to_hash = method + "\n" + str(content_length) + "\n" + content_type + "\n" + x_headers + "\n" + resource
@@ -102,14 +105,12 @@ class AzureOMSInterface:
         authorization = "SharedKey {}:{}".format(self.workspace_id, encoded_hash)
         return authorization
 
-    def post_data(self, body, log_type):
-        """Sends payload to Azure Log Analytics Workspace
-
-        Keyword arguments:
-        customer_id -- Workspace ID obtained from Advanced Settings
-        shared_key -- Authorization header, created using build_signature
-        body -- payload to send to Azure Log Analytics
-        log_type -- Azure Log Analytics table name
+    def post_data(self, body, log_type, time_generated):
+        """
+        Sends payload to Azure Log Analytics Workspace.
+        :param body: payload to send to Azure Log Analytics (json.dumps str)
+        :param log_type: Azure Log Analytics table name (str)
+        :param time_generated: date time of the original audit log msg (ISO 8601 str)
         """
         method = 'POST'
         content_type = 'application/json'
@@ -124,7 +125,8 @@ class AzureOMSInterface:
             'content-type': content_type,
             'Authorization': signature,
             'Log-Type': log_type,
-            'x-ms-date': rfc1123date
+            'x-ms-date': rfc1123date,
+            'time-generated-field': time_generated
         }
         response = self.session.post(uri, data=body, headers=headers)
         status_code, json_output = response.status_code, response.json
