@@ -147,7 +147,7 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         while True:
             threads = [thread for thread in threads if thread.is_alive()]
             if self.done_collecting_available_content and self.done_retrieving_content and not threads:
-                return
+                break
             if not self.blobs_to_collect:
                 continue
             blob_json = self.blobs_to_collect.popleft()
