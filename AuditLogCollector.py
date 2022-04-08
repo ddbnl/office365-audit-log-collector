@@ -1,35 +1,45 @@
 # Standard libs
+import collections
 import os
 import json
 import logging
 import datetime
 import argparse
 import dateutil.parser
-from collections import deque
+import collections
 import threading
 # Internal libs
+import AzureOMSInterface
 import GraylogInterface
 import ApiConnection
 
 
 class AuditLogCollector(ApiConnection.ApiConnection):
 
-    def __init__(self, content_types, *args, output_path=None, graylog_address=None, graylog_port=None,
-                 graylog_output=False, file_output=False, resume=True, fallback_time=None, **kwargs):
+    def __init__(self, content_types, *args, resume=True, fallback_time=None,
+                 file_output=False, output_path=None,
+                 graylog_output=False, graylog_address=None, graylog_port=None,
+                 azure_oms_output=False, azure_oms_workspace_id=None, azure_oms_shared_key=None,
+                 **kwargs):
         """
         Object that can retrieve all available content blobs for a list of content types and then retrieve those
         blobs and output them to a file or Graylog input (i.e. send over a socket).
         :param content_types: list of content types to retrieve (e.g. 'Audit.Exchange', 'Audit.Sharepoint')
-        :param output_path: path to output retrieved logs to (None=no file output) (string)
-        :param graylog_address: IP/Hostname of Graylog server to output audit logs to (str)
-        :param graylog_port: port of Graylog server to output audit logs to (int)
-        :param file_output: path of file to output audit logs to (str)
         :param resume: Resume from last known run time for each content type (Bool)
         :param fallback_time: if no last run times are found to resume from, run from this start time (Datetime)
-        """
+        :param file_output: path of file to output audit logs to (str)
+        :param output_path: path to output retrieved logs to (None=no file output) (string)
+        :param graylog_output: Enable graylog Interface (Bool)
+        :param graylog_address: IP/Hostname of Graylog server to output audit logs to (str)
+        :param graylog_port: port of Graylog server to output audit logs to (int)
+        :param azure_oms_output: Enable Azure workspace analytics OMS Interface (Bool)
+        :param azure_oms_workspace_id: Found under "Agent Configuration" blade in Portal (str)
+        :param azure_oms_shared_key: Found under "Agent Configuration" blade in Portal(str)
+                """
         super().__init__(*args, **kwargs)
         self.file_output = file_output
         self.graylog_output = graylog_output
+        self.azure_oms_output = azure_oms_output
         self.output_path = output_path
         self.content_types = content_types
         self._last_run_times = {}
@@ -37,17 +47,23 @@ class AuditLogCollector(ApiConnection.ApiConnection):
             self.get_last_run_times()
         self._fallback_time = fallback_time or datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=1)
         self._known_content = {}
-        self._graylog_interface = GraylogInterface.GraylogInterface(graylog_address=graylog_address,
-                                                                    graylog_port=graylog_port)
-        self.blobs_to_collect = deque()
+        if self.azure_oms_output:
+            self._azure_oms_interface = AzureOMSInterface.AzureOMSInterface(workspace_id=azure_oms_workspace_id,
+                                                                            shared_key=azure_oms_shared_key)
+        if self.graylog_output:
+            self._graylog_interface = GraylogInterface.GraylogInterface(graylog_address=graylog_address,
+                                                                        graylog_port=graylog_port)
+        self.blobs_to_collect = collections.defaultdict(collections.deque)
         self.monitor_thread = threading.Thread()
-        self.retrieve_available_content_threads = deque()
-        self.retrieve_content_threads = deque()
+        self.retrieve_available_content_threads = collections.deque()
+        self.retrieve_content_threads = collections.deque()
+        self.logs_retrieved = 0
 
     def run_once(self, start_time=None):
         """
         Check available content and retrieve it, then exit.
         """
+        run_started = datetime.datetime.now()
         self._clean_known_content()
         self.start_monitoring()
         self.get_all_available_content(start_time=start_time)
@@ -55,6 +71,14 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         if self._last_run_times:
             with open('last_run_times', 'w') as ofile:
                 json.dump(fp=ofile, obj=self._last_run_times)
+        logging.info("Finished. Total logs retrieved: {}. Run time: {}.".format(
+            self.logs_retrieved, datetime.datetime.now() - run_started))
+        if self.azure_oms_output:
+            logging.info("Azure OMS output report: {} successfully sent, {} errors".format(
+                self._azure_oms_interface.successfully_sent, self._azure_oms_interface.unsuccessfully_sent))
+        if self.graylog_output:
+            logging.info("Graylog output report: {} successfully sent, {} errors".format(
+                self._graylog_interface.successfully_sent, self._graylog_interface.unsuccessfully_sent))
 
     def get_last_run_times(self):
 
@@ -74,7 +98,10 @@ class AuditLogCollector(ApiConnection.ApiConnection):
     @property
     def done_retrieving_content(self):
 
-        return not bool(self.blobs_to_collect)
+        for content_type in self.blobs_to_collect:
+            if self.blobs_to_collect[content_type]:
+                return False
+        return True
 
     @property
     def done_collecting_available_content(self):
@@ -121,13 +148,13 @@ class AuditLogCollector(ApiConnection.ApiConnection):
             formatted_start_time = str(start_time).replace(' ', 'T').rsplit('.', maxsplit=1)[0]
             response = self.make_api_request(url='subscriptions/content?contentType={0}&startTime={1}&endTime={2}'.format(
                 content_type, formatted_start_time, formatted_end_time))
-            self.blobs_to_collect += response.json()
+            self.blobs_to_collect[content_type] += response.json()
             while 'NextPageUri' in response.headers.keys() and response.headers['NextPageUri']:
                 logging.log(level=logging.DEBUG, msg='Getting next page of content for type: "{0}"'.format(content_type))
-                self.blobs_to_collect += response.json()
+                self.blobs_to_collect[content_type] += response.json()
                 response = self.make_api_request(url=response.headers['NextPageUri'], append_url=False)
             logging.log(level=logging.DEBUG, msg='Got {0} content blobs of type: "{1}"'.format(
-                len(self.blobs_to_collect), content_type))
+                len(self.blobs_to_collect[content_type]), content_type))
         except Exception as e:
             logging.log(level=logging.DEBUG, msg="Error while getting available content: {}: {}".format(
                 content_type, e))
@@ -141,29 +168,37 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         Wait for the 'retrieve_available_content' function to retrieve content URI's. Once they become available
         start retrieving in a background thread.
         """
+        if self.azure_oms_output:
+            self._azure_oms_interface.start()
         if self.graylog_output:
             self._graylog_interface.start()
-        threads = deque()
+        threads = collections.deque()
         while True:
             threads = [thread for thread in threads if thread.is_alive()]
             if self.done_collecting_available_content and self.done_retrieving_content and not threads:
-                return
+                break
             if not self.blobs_to_collect:
                 continue
-            blob_json = self.blobs_to_collect.popleft()
-            if blob_json and 'contentUri' in blob_json:
-                logging.log(level=logging.DEBUG, msg='Retrieving content blob: "{0}"'.format(blob_json))
-                threads.append(threading.Thread(target=self.retrieve_content, daemon=True,
-                                                kwargs={'content_json': blob_json}))
-                threads[-1].start()
+            for content_type, blobs_to_collect in self.blobs_to_collect.items():
+                if self.blobs_to_collect[content_type]:
+                    blob_json = self.blobs_to_collect[content_type].popleft()
+                    if blob_json and 'contentUri' in blob_json:
+                        logging.log(level=logging.DEBUG, msg='Retrieving content blob: "{0}"'.format(blob_json))
+                        threads.append(threading.Thread(
+                            target=self.retrieve_content, daemon=True,
+                            kwargs={'content_json': blob_json, 'content_type': content_type}))
+                        threads[-1].start()
+        if self.azure_oms_output:
+            self._azure_oms_interface.stop()
         if self.graylog_output:
             self._graylog_interface.stop()
 
-    def retrieve_content(self, content_json):
+    def retrieve_content(self, content_json, content_type):
         """
         Get an available content blob. If it exists in the list of known content blobs it is skipped to ensure
         idempotence.
         :param content_json: JSON dict of the content blob as retrieved from the API (dict)
+        :param content_type: Type of API being retrieved for, e.g. 'Audit.Exchange' (str)
         :return:
         """
         if self.known_content and content_json['contentId'] in self.known_content:
@@ -176,12 +211,15 @@ class AuditLogCollector(ApiConnection.ApiConnection):
             logging.error("Error retrieving content: {}".format(e))
             return
         else:
+            self.logs_retrieved += len(result)
             self._add_known_content(content_id=content_json['contentId'],
                                     content_expiration=content_json['contentExpiration'])
             if self.file_output:
                 self.output_results_to_file(results=result)
             if self.graylog_output:
                 self._graylog_interface.send_messages_to_graylog(*result)
+            if self.azure_oms_output:
+                self._azure_oms_interface.send_messages_to_oms(*result, content_type=content_type)
 
     def output_results_to_file(self, results):
         """
@@ -265,6 +303,11 @@ if __name__ == "__main__":
     parser.add_argument('-fP', metavar='file_output_path', type=str, help='Path of directory of output files',
                         default=os.path.join(os.path.dirname(__file__), 'output'), action='store',
                         dest='output_path')
+    parser.add_argument('-a', help='Output to Azure Log Analytics workspace.', action='store_true', dest='azure')
+    parser.add_argument('-aC', metavar='azure_workspace', type=str, help='ID of log analytics workspace.',
+                        action='store', dest='azure_workspace')
+    parser.add_argument('-aS', metavar='azure_key', type=str, help='Shared key of log analytics workspace.',
+                        action='store', dest='azure_key')
     parser.add_argument('-g', help='Output to graylog.', action='store_true', dest='graylog')
     parser.add_argument('-gA', metavar='graylog_address', type=str, help='Address of graylog server.', action='store',
                         dest='graylog_addr')
@@ -297,13 +340,15 @@ if __name__ == "__main__":
                         level=logging.INFO if not argsdict['debug_logging'] else logging.DEBUG)
     logging.log(level=logging.INFO, msg='Starting run @ {0}'.format(datetime.datetime.now()))
 
-    collector = AuditLogCollector(output_path=argsdict['output_path'], tenant_id=argsdict['tenant_id'],
-                                  secret_key=argsdict['secret_key'], client_key=argsdict['client_key'],
-                                  content_types=content_types, graylog_address=argsdict['graylog_addr'],
-                                  graylog_port=argsdict['graylog_port'], graylog_output=argsdict['graylog'],
-                                  file_output=argsdict['file'], publisher_id=argsdict['publisher_id'],
-                                  resume=argsdict['resume'], fallback_time=fallback_time)
-
+    collector = AuditLogCollector(
+        tenant_id=argsdict['tenant_id'], secret_key=argsdict['secret_key'], client_key=argsdict['client_key'],
+        content_types=content_types, publisher_id=argsdict['publisher_id'], resume=argsdict['resume'],
+        fallback_time=fallback_time,
+        file_output=argsdict['file'], output_path=argsdict['output_path'],
+        azure_oms_output=argsdict['azure'], azure_oms_workspace_id=argsdict['azure_workspace'],
+        azure_oms_shared_key=argsdict['azure_key'],
+        graylog_address=argsdict['graylog_addr'], graylog_port=argsdict['graylog_port'],
+        graylog_output=argsdict['graylog'])
     collector.run_once()
 
 

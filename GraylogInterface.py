@@ -15,6 +15,8 @@ class GraylogInterface(object):
         self.gl_port = graylog_port
         self.monitor_thread = None
         self.queue = deque()
+        self.successfully_sent = 0
+        self.unsuccessfully_sent = 0
 
     def start(self):
 
@@ -73,11 +75,14 @@ class GraylogInterface(object):
                 else:
                     logging.error("Error connecting to graylog: {}. Giving up for this message: {}".format(
                         e, msg_string))
+                    self.unsuccessfully_sent += 1
                     return
             else:
                 break
         try:
             sock.sendall(msg_string.encode())
         except Exception as e:
+            self.unsuccessfully_sent += 1
             logging.error("Error sending message to graylog: {}.".format(e))
         sock.close()
+        self.successfully_sent += 1

@@ -1,18 +1,25 @@
 # Office365 API audit log collector
 
-Subscribe to and collect logs from Office365 auditing APIs (https://msdn.microsoft.com/en-us/office-365/office-365-management-activity-api-reference).
-Currently has the option to output to a network socket (when using e.g. Graylog) or a file. 
-Feel free to contribute other outputs if you happen to build any. Default behavior is to retrieve logs of the last 24 hours.
+Collect Office365 and Azure audit logs through their respective APIs. No prior knowledge of APIs is required, 
+onboarding and script usage is described below. Currently supports the following outputs:
+- Azure Analytics Workspace (OMS)
+- Graylog (or any other source that accepts a simple socket connection)
+- File
+
+For a full audit trail schedule to run the script on a regular basis (preferably at least once every day). The last
+run time is recorded automatically, so that when the script runs again it starts to retrieve audit logs from when it last ran.
+Feel free to contribute other outputs if you happen to build any.
+See the following link for more info on the management APIs: https://msdn.microsoft.com/en-us/office-365/office-365-management-activity-api-reference.
 
 ## Roadmap:
 
-I was unable to work on this repo for a while. Now that I'm back I want to make some improvements and add some features:
-- Add Azure Analytics Workspace output
+- Add an optional GUI
 - Automate onboarding as much as possible to make it easier to use
 - Make a container that runs this script
 - Create a tutorial for automatic onboarding + docker container for the easiest way to run this
 
 ## Latest changes:
+- Added Azure Log Analytics Workspace OMS output
 - Added parameter to resume from last run time (use to not miss any logs when script hasn't run for a while)
 - Added parameter for amount of hours or days to go back and look for content
 - Integrated bug fixes from pull requests, thank you!
@@ -35,13 +42,12 @@ I was unable to work on this repo for a while. Now that I'm back I want to make 
 
 ## Requirements:
 - Office365 tenant;
-- Azure application created for this script (see instructions)
+- Azure app registration created for this script (see instructions)
 - AzureAD tenant ID;
-- Client key of the new Azure application;
-- Secret key (created in the new Azure application, see instructions);
-- App permissions to access the API's for the new Azure application (see instructions);
-- Subscription to the API's of your choice (General/Sharepoint/Exchange/AzureAD/DLP, 
-run AuditLogSubscription script and follow the instructions).
+- Client key of the new Azure app registration;
+- Secret key (created in the new Azure app registration, see instructions);
+- App permissions to access the APIs for the new Azure application (see instructions);
+- Subscription to the APIs of your choice (General/Sharepoint/Exchange/AzureAD/DLP, run AuditLogSubscription script and follow the instructions).
 
 ## Instructions:
 
@@ -53,9 +59,20 @@ run AuditLogSubscription script and follow the instructions).
       - Graph: AuditLog.Read.All
       - Office 365 Management APIs: ActivityFeed.Read
       - Office 365 Management APIs: ActivityFeed.ReadDlp
+- Make sure Auditing is turned on for your tenant!
+  - https://docs.microsoft.com/en-us/microsoft-365/compliance/turn-audit-log-search-on-or-off?view=o365-worldwide
+  - If you had to turn it on, it may take a few hours to process
 - Use the 'AuditLogSubscriber' script to subscribe to the audit API's of your choice
   - You will need tenant id, client key and secret key for this
+  - Simply follow the instructions
 - You can now run the script and retrieve logs. 
+
+
+### (optional) Creating an Azure Log Analytics Workspace (OMS):
+
+If you are running this script to get audit events in an Azure Analytics Workspace you will a Workspace ID and a shared key.
+Create a workspace from "Create resource" in Azure (no configuration required). Then get the ID and key from "Agent management".
+You do not need to prepare any tables or other settings.
 
 
 ### (optional) Creating a Graylog input
@@ -99,6 +116,9 @@ optional arguments:
   -l log_path           Path of log file
   -f                    Output to file.
   -fP file_output_path  Path of directory of output files
+  -a                    Output to Azure Log Analytics workspace
+  -aC                   ID of log analytics workspace.
+  -aS                   Shared key of log analytics workspace.
   -g                    Output to graylog.
   -gA graylog_address   Address of graylog server.
   -gP graylog_port      Port of graylog server.
