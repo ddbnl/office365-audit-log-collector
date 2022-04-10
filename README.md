@@ -1,10 +1,24 @@
 # Office365 API audit log collector
 
 Collect Office365 and Azure audit logs through their respective APIs. No prior knowledge of APIs is required, 
-onboarding and script usage is described below. Currently supports the following outputs:
+onboarding and script usage is described below. There is a GUI for Windows. Currently supports the following outputs:
 - Azure Analytics Workspace (OMS)
 - Graylog (or any other source that accepts a simple socket connection)
 - File
+
+Simply download the executable(s) you need from the Windows or Linux folder.:
+- Windows:
+  - GUI - Office Audit Log Collector.exe
+    - GUI for collecting audit logs AND subscribing to audit log feeds (see onboarding instructions below)
+  - Office Audit Log Collector.exe
+    - Command line tool for collecting audit logs (see syntax below)
+  - Office Audit Log Subscriber.exe
+    - Command line tool for subscribing to audit logs feeds (see onboarding instructions below)
+- Linux:
+  - OfficeAuditLogCollector
+    - Command line tool for collecting audit logs (see syntax below)
+  - OfficeAuditLogSubscriber
+    - Command line tool for subscribing to audit logs (see onboarding instructions below)
 
 For a full audit trail schedule to run the script on a regular basis (preferably at least once every day). The last
 run time is recorded automatically, so that when the script runs again it starts to retrieve audit logs from when it last ran.
@@ -13,12 +27,13 @@ See the following link for more info on the management APIs: https://msdn.micros
 
 ## Roadmap:
 
-- Add an optional GUI
 - Automate onboarding as much as possible to make it easier to use
 - Make a container that runs this script
 - Create a tutorial for automatic onboarding + docker container for the easiest way to run this
 
 ## Latest changes:
+- Added a GUI for Windows
+- Added executables for Windows and Linux
 - Added Azure Log Analytics Workspace OMS output
 - Added parameter to resume from last run time (use to not miss any logs when script hasn't run for a while)
 - Added parameter for amount of hours or days to go back and look for content
@@ -51,9 +66,9 @@ See the following link for more info on the management APIs: https://msdn.micros
 
 ## Instructions:
 
-### Creating an application in Azure:
-- Create the app registration: 
-  - Create app registration itself under Azure AD (own tenant only works fine for single tenant)
+### Onboarding:
+- Create an app registration: 
+  - Create the app registration itself under Azure AD (own tenant only works fine for single tenant)
   - Create app secret (only shown once upon creation, store it somewhere safe)
   - Grant your new app permissions to read the Office API's: 
       - Graph: AuditLog.Read.All
