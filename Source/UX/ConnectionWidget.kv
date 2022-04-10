@@ -1,0 +1,36 @@
+<ConnectionWidget>:
+    StackLayout:
+        padding: 5, 20
+        orientation: "tb-lr"
+        StackLayout:
+            size_hint_y: 0.2
+            orientation: 'tb-lr'
+            ScalingLabel:
+                text: "Log in to an Azure AD App Registration. The registered app must have the proper permissions, and your tenant must have audit logs enabled. Refer to the docs for more info."
+        MDTextField:
+            id: tenant_id
+            hint_text: "Tenant ID"
+            text: app.tenant_id
+        MDTextField:
+            id: client_key
+            hint_text: "Client key"
+            text: app.client_key
+        MDTextField:
+            id: secret_key
+            hint_text: "Secret key"
+            password_mask: "*"
+            password: True
+            text: app.secret_key
+        MDTextField:
+            id: publisher_id
+            hint_text: "Publisher ID"
+            text: app.publisher_id
+        MDRaisedButton:
+            id: login_button
+            text: "Login"
+            on_press: app.login(tenant_id.text, client_key.text, secret_key.text, publisher_id.text)
+
+<ScalingLabel@MDLabel>:
+    text_size: root.width, None
+    size: self.texture_size
+    markup: True
