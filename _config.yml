@@ -1,0 +1,13 @@
+lsi: false
+safe: true
+incremental: false
+highlighter: rouge
+gist:
+  noscript: false
+kramdown:
+  math_engine: mathjax
+  syntax_highlighter: rouge
+title: "Office and Azure Audit Log Collector"
+theme: jekyll-theme-slate
+plugins:
+  - jekyll-seo-tag
