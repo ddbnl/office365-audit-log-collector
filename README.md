@@ -1,3 +1,5 @@
+{% seo %}
+
 # Office365 API audit log collector
 
 Collect Office365 and Azure audit logs through their respective APIs. No prior knowledge of APIs is required, 
