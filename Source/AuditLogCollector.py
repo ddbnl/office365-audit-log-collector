@@ -10,17 +10,17 @@ import dateutil.parser
 import collections
 import threading
 # Internal libs
-import AzureOMSInterface
-import GraylogInterface
+import AzureOMSInterface, GraylogInterface, PRTGInterface
 import ApiConnection
 
 
 class AuditLogCollector(ApiConnection.ApiConnection):
 
-    def __init__(self, *args, content_types=None, resume=True, fallback_time=None, filters=None,
+    def __init__(self, *args, content_types=None, resume=True, fallback_time=None,
                  file_output=False, output_path=None,
                  graylog_output=False, graylog_address=None, graylog_port=None,
                  azure_oms_output=False, azure_oms_workspace_id=None, azure_oms_shared_key=None,
+                 prtg_output=False,
                  **kwargs):
         """
         Object that can retrieve all available content blobs for a list of content types and then retrieve those
@@ -36,14 +36,16 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         :param azure_oms_output: Enable Azure workspace analytics OMS Interface (Bool)
         :param azure_oms_workspace_id: Found under "Agent Configuration" blade in Portal (str)
         :param azure_oms_shared_key: Found under "Agent Configuration" blade in Portal(str)
+        :param prtg_output: Enable PRTG output (Bool)
                 """
         super().__init__(*args, **kwargs)
         self.content_types = content_types or collections.deque()
         self.resume = resume
         if resume:
             self.get_last_run_times()
-        self._fallback_time = fallback_time or datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=1)
-        self.filters = filters or self.load_filters() or {}
+        self._fallback_time = fallback_time or datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(
+            hours=23)
+        self.filters = self.load_filters() or {}
         self.file_output = file_output
         self.output_path = output_path
         self.azure_oms_output = azure_oms_output
@@ -52,6 +54,8 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         self.graylog_output = graylog_output
         self._graylog_interface = GraylogInterface.GraylogInterface(graylog_address=graylog_address,
                                                                     graylog_port=graylog_port)
+        self.prtg_output = prtg_output
+        self._prtg_interface = PRTGInterface.PRTGInterface(config=self.load_prtg_config() if prtg_output else {})
         self._last_run_times = {}
         self._known_content = {}
 
@@ -82,6 +86,8 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         if self.resume and self._last_run_times:
             with open('last_run_times', 'w') as ofile:
                 json.dump(fp=ofile, obj=self._last_run_times)
+        if self.prtg_output:
+            self._prtg_interface.output()
         logging.info("Finished. Total logs retrieved: {}. Run time: {}.".format(
             self.logs_retrieved, datetime.datetime.now() - self.run_started))
         if self.azure_oms_output:
@@ -95,6 +101,12 @@ class AuditLogCollector(ApiConnection.ApiConnection):
 
         if os.path.exists('filters.yaml'):
             with open('filters.yaml', 'r') as ofile:
+                return yaml.safe_load(ofile)
+
+    def load_prtg_config(self):
+
+        if os.path.exists('PrtgConfig.yaml'):
+            with open('PrtgConfig.yaml', 'r') as ofile:
                 return yaml.safe_load(ofile)
 
     def get_last_run_times(self):
@@ -187,6 +199,8 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         """
         if self.azure_oms_output:
             self._azure_oms_interface.start()
+        if self.prtg_output:
+            self._prtg_interface.start()
         if self.graylog_output:
             self._graylog_interface.start()
         threads = collections.deque()
@@ -207,6 +221,8 @@ class AuditLogCollector(ApiConnection.ApiConnection):
                         threads[-1].start()
         if self.azure_oms_output:
             self._azure_oms_interface.stop()
+        if self.prtg_output:
+            self._prtg_interface.stop()
         if self.graylog_output:
             self._graylog_interface.stop()
 
@@ -236,18 +252,19 @@ class AuditLogCollector(ApiConnection.ApiConnection):
             self.logs_retrieved += len(result)
             if self.file_output:
                 self.output_results_to_file(results=result)
+            if self.prtg_output:
+                self._prtg_interface.send_messages_to_prtg(*result, content_type=content_type)
             if self.graylog_output:
-                self._graylog_interface.send_messages_to_graylog(*result)
+                self._graylog_interface.send_messages_to_graylog(*result, content_type=content_type)
             if self.azure_oms_output:
                 self._azure_oms_interface.send_messages_to_oms(*result, content_type=content_type)
 
     def check_filters(self, log, content_type):
 
-        if content_type not in self.filters or not self.filters[content_type]:
-            return True
-        for log_filter_key, log_filter_value in self.filters[content_type].items():
-            if log_filter_key not in log or log[log_filter_key].lower() != log_filter_value.lower():
-                return False
+        if content_type in self.filters and self.filters[content_type]:
+            for log_filter_key, log_filter_value in self.filters[content_type].items():
+                if log_filter_key not in log or log[log_filter_key].lower() != log_filter_value.lower():
+                    return False
         return True
 
     def output_results_to_file(self, results):
@@ -332,6 +349,7 @@ if __name__ == "__main__":
     parser.add_argument('-fP', metavar='file_output_path', type=str, help='Path of directory of output files',
                         default=os.path.join(os.path.dirname(__file__), 'output'), action='store',
                         dest='output_path')
+    parser.add_argument('-P', help='Output to PRTG with PrtgConfig.yaml.', action='store_true', dest='prtg')
     parser.add_argument('-a', help='Output to Azure Log Analytics workspace.', action='store_true', dest='azure')
     parser.add_argument('-aC', metavar='azure_workspace', type=str, help='ID of log analytics workspace.',
                         action='store', dest='azure_workspace')
@@ -378,6 +396,7 @@ if __name__ == "__main__":
         content_types=content_types, publisher_id=argsdict['publisher_id'], resume=argsdict['resume'],
         fallback_time=fallback_time,
         file_output=argsdict['file'], output_path=argsdict['output_path'],
+        prtg_output=argsdict['prtg'],
         azure_oms_output=argsdict['azure'], azure_oms_workspace_id=argsdict['azure_workspace'],
         azure_oms_shared_key=argsdict['azure_key'],
         graylog_address=argsdict['graylog_addr'], graylog_port=argsdict['graylog_port'],

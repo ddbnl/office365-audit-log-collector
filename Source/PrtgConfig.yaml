@@ -1,0 +1,13 @@
+channels:
+  - name: Deleted Sharepoint files
+    filters:
+      Audit.SharePoint:
+      - Operation: DeletedFile
+  - name: Failed Azure AD logins
+    filters:
+      Audit.AzureActiveDirectory:
+      - Operation: UserLoginFailed
+  - name: Spoof attempts prevented
+    filters:
+      Audit.General:
+      - Policy: Spoof
