@@ -10,6 +10,7 @@ import time
 import logging
 import threading
 import datetime
+Config.set('graphics', 'resizable', False)
 Config.set('graphics', 'width', '450')
 Config.set('graphics', 'height', '600')
 Config.write()

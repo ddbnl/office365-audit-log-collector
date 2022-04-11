@@ -1,6 +1,7 @@
 # Standard libs
 import os
 import sys
+import yaml
 import json
 import logging
 import datetime
@@ -16,7 +17,7 @@ import ApiConnection
 
 class AuditLogCollector(ApiConnection.ApiConnection):
 
-    def __init__(self, *args, content_types=None, resume=True, fallback_time=None,
+    def __init__(self, *args, content_types=None, resume=True, fallback_time=None, filters=None,
                  file_output=False, output_path=None,
                  graylog_output=False, graylog_address=None, graylog_port=None,
                  azure_oms_output=False, azure_oms_workspace_id=None, azure_oms_shared_key=None,
@@ -37,21 +38,23 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         :param azure_oms_shared_key: Found under "Agent Configuration" blade in Portal(str)
                 """
         super().__init__(*args, **kwargs)
-        self.file_output = file_output
-        self.graylog_output = graylog_output
-        self.azure_oms_output = azure_oms_output
-        self.output_path = output_path
         self.content_types = content_types or collections.deque()
-        self._last_run_times = {}
         self.resume = resume
         if resume:
             self.get_last_run_times()
         self._fallback_time = fallback_time or datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=1)
-        self._known_content = {}
+        self.filters = filters or self.load_filters() or {}
+        self.file_output = file_output
+        self.output_path = output_path
+        self.azure_oms_output = azure_oms_output
         self._azure_oms_interface = AzureOMSInterface.AzureOMSInterface(workspace_id=azure_oms_workspace_id,
                                                                         shared_key=azure_oms_shared_key)
+        self.graylog_output = graylog_output
         self._graylog_interface = GraylogInterface.GraylogInterface(graylog_address=graylog_address,
                                                                     graylog_port=graylog_port)
+        self._last_run_times = {}
+        self._known_content = {}
+
         self.blobs_to_collect = collections.defaultdict(collections.deque)
         self.monitor_thread = threading.Thread()
         self.retrieve_available_content_threads = collections.deque()
@@ -87,6 +90,12 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         if self.graylog_output:
             logging.info("Graylog output report: {} successfully sent, {} errors".format(
                 self._graylog_interface.successfully_sent, self._graylog_interface.unsuccessfully_sent))
+
+    def load_filters(self):
+
+        if os.path.exists('filters.yaml'):
+            with open('filters.yaml', 'r') as ofile:
+                return yaml.safe_load(ofile)
 
     def get_last_run_times(self):
 
@@ -219,15 +228,27 @@ class AuditLogCollector(ApiConnection.ApiConnection):
             logging.error("Error retrieving content: {}".format(e))
             return
         else:
-            self.logs_retrieved += len(result)
             self._add_known_content(content_id=content_json['contentId'],
                                     content_expiration=content_json['contentExpiration'])
+            for log in result.copy():
+                if self.filters and not self.check_filters(log=log, content_type=content_type):
+                    result.remove(log)
+            self.logs_retrieved += len(result)
             if self.file_output:
                 self.output_results_to_file(results=result)
             if self.graylog_output:
                 self._graylog_interface.send_messages_to_graylog(*result)
             if self.azure_oms_output:
                 self._azure_oms_interface.send_messages_to_oms(*result, content_type=content_type)
+
+    def check_filters(self, log, content_type):
+
+        if content_type not in self.filters or not self.filters[content_type]:
+            return True
+        for log_filter_key, log_filter_value in self.filters[content_type].items():
+            if log_filter_key not in log or log[log_filter_key].lower() != log_filter_value.lower():
+                return False
+        return True
 
     def output_results_to_file(self, results):
         """

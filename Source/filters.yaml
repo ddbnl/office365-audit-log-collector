@@ -1,0 +1,5 @@
+Audit.General:
+Audit.AzureActiveDirectory:
+Audit.Exchange:
+Audit.SharePoint:
+DLP.All:
