@@ -1,0 +1,27 @@
+log:
+  path: 'collector.log'
+collect:
+  contentTypes:
+    Audit.General: True
+    Audit.AzureActiveDirectory: True
+    Audit.Exchange: True
+    Audit.SharePoint: True
+    DLP.All: True
+  autoSubscribe: True
+  skipKnownLogs: True
+  resume: True
+  hoursToCollect: 24
+# Collect logs concerning spoofing prevention in Audit.General, deleted files from Audit.SharePoint
+# and login failures from Audit.AzureActiveDirectory
+filter:
+  Audit.General:
+    - Policy: Spoof
+  Audit.AzureActiveDirectory:
+    - Operation: UserLoginFailed
+  Audit.SharePoint:
+    - Operation: FileDeleted
+# Output only to file
+output:
+  file:
+    enabled: True
+    path: 'output.txt'

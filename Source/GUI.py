@@ -85,13 +85,13 @@ class GUI(MDApp):
         prefix.ids.collector_widget.ids.run_time.text = str(datetime.datetime.now() - self.collector.run_started)
         prefix.ids.collector_widget.ids.retrieved_label.text = str(self.collector.logs_retrieved)
         prefix.ids.collector_widget.ids.azure_sent_label.text = str(
-            self.collector._azure_oms_interface.successfully_sent)
+            self.collector.azure_oms_interface.successfully_sent)
         prefix.ids.collector_widget.ids.azure_error_label.text = str(
-            self.collector._azure_oms_interface.unsuccessfully_sent)
+            self.collector.azure_oms_interface.unsuccessfully_sent)
         prefix.ids.collector_widget.ids.graylog_sent_label.text = str(
-            self.collector._graylog_interface.successfully_sent)
+            self.collector.graylog_interface.successfully_sent)
         prefix.ids.collector_widget.ids.graylog_error_label.text = str(
-            self.collector._graylog_interface.unsuccessfully_sent)
+            self.collector.graylog_interface.unsuccessfully_sent)
 
     def run_once(self):
 
@@ -140,10 +140,10 @@ class GUI(MDApp):
         self.collector.output_path = prefix.ids.config_widget.ids.file_output_path.text
         self.collector.azure_oms_output = prefix.ids.config_widget.ids.oms_output_switch.active
         self.collector.graylog_output = prefix.ids.config_widget.ids.graylog_output_switch.active
-        self.collector._azure_oms_interface.workspace_id = prefix.ids.config_widget.ids.oms_id.text
-        self.collector._azure_oms_interface.shared_key = prefix.ids.config_widget.ids.oms_key.text
-        self.collector._graylog_interface.gl_address = prefix.ids.config_widget.ids.graylog_ip.text
-        self.collector._graylog_interface.gl_port = prefix.ids.config_widget.ids.graylog_port.text
+        self.collector.azure_oms_interface.workspace_id = prefix.ids.config_widget.ids.oms_id.text
+        self.collector.azure_oms_interface.shared_key = prefix.ids.config_widget.ids.oms_key.text
+        self.collector.graylog_interface.gl_address = prefix.ids.config_widget.ids.graylog_ip.text
+        self.collector.graylog_interface.gl_port = prefix.ids.config_widget.ids.graylog_port.text
         if prefix.ids.config_widget.ids.log_switch.active:
             logging.basicConfig(filemode='w', filename='logs.txt', level=logging.DEBUG)
 

@@ -1,60 +1,20 @@
-import requests
-import requests.adapters
-import hashlib
-import hmac
-import base64
-import logging
+from . import _Interface
 import threading
 import collections
-import time
-import json
-import datetime
 from prtg.sensor.result import CustomSensorResult
 
 
-class PRTGInterface:
+class PRTGInterface(_Interface.Interface):
 
-    def __init__(self, config=None):
+    def __init__(self, config=None, **kwargs):
         """
         Interface to send logs to an Azure Log Analytics Workspace.
         """
-        self.monitor_thread = None
-        self.queue = collections.deque()
-        self.successfully_sent = 0
-        self.unsuccessfully_sent = 0
+        super().__init__(**kwargs)
         self.config = config
         self.results = collections.defaultdict(collections.deque)
 
-    def start(self):
-
-        self.monitor_thread = threading.Thread(target=self.monitor_queue, daemon=True)
-        self.monitor_thread.start()
-
-    def stop(self, gracefully=True):
-
-        if gracefully:
-            self.queue.append(('stop monitor thread', ''))
-        else:
-            self.queue.appendleft(('stop monitor thread', ''))
-        if self.monitor_thread.is_alive():
-            self.monitor_thread.join()
-
-    def monitor_queue(self):
-
-        while 1:
-            if self.queue:
-                msg, content_type = self.queue.popleft()
-                if msg == 'stop monitor thread':
-                    return
-                else:
-                    self.filter_result(message=msg, content_type=content_type)
-
-    def send_messages_to_prtg(self, *messages, content_type):
-
-        for message in messages:
-            self.queue.append((message, content_type))
-
-    def filter_result(self, message, content_type):
+    def _send_message(self, message, content_type, **kwargs):
 
         for channel in self.config['channels']:
             if content_type not in channel['filters']:

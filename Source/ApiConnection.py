@@ -6,7 +6,7 @@ import urllib.parse
 
 class ApiConnection(object):
 
-    def __init__(self, tenant_id=None, client_key=None, secret_key=None, publisher_id=None):
+    def __init__(self, tenant_id=None, client_key=None, secret_key=None, publisher_id=None, **kwargs):
         """
         Object that creates the authorization headers for- and sends API requests to the Microsoft Office APIs'.
         Taken from a Microsoft sample script that I cannot find the original of to reference.
@@ -43,7 +43,8 @@ class ApiConnection(object):
             self.client_key, urllib.parse.quote(self.secret_key), resource)
         r = requests.post(auth_url, headers=headers, data=data, verify=True)
         resp = r.json()
-
+        if not self.publisher_id:
+            self.publisher_id = self.tenant_id
         try:
             headers['Authorization'] = 'bearer ' + resp['access_token']
             logging.log(level=logging.DEBUG, msg='Logged in')

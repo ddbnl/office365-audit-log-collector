@@ -1,3 +1,4 @@
+from . import _Interface
 import requests
 import requests.adapters
 import hashlib
@@ -11,42 +12,27 @@ import json
 import datetime
 
 
-class AzureOMSInterface:
+class AzureOMSInterface(_Interface.Interface):
 
-    def __init__(self, workspace_id, shared_key, max_threads=50):
+    def __init__(self, workspace_id=None, shared_key=None, max_threads=50, **kwargs):
         """
         Interface to send logs to an Azure Log Analytics Workspace.
         :param workspace_id: Found under "Agent Configuration" blade (str)
         :param shared_key: Found under "Agent Configuration" blade (str)
         """
+        super().__init__(**kwargs)
         self.workspace_id = workspace_id
         self.shared_key = shared_key
         self.max_threads = max_threads
         self.threads = collections.deque()
-        self.monitor_thread = None
-        self.queue = collections.deque()
-        self.successfully_sent = 0
-        self.unsuccessfully_sent = 0
         self.session = requests.Session()
         adapter = requests.adapters.HTTPAdapter(pool_connections=self.max_threads, pool_maxsize=self.max_threads)
         self.session.mount('https://', adapter)
 
-    def start(self):
-
-        self.monitor_thread = threading.Thread(target=self.monitor_queue, daemon=True)
-        self.monitor_thread.start()
-
-    def stop(self, gracefully=True):
-
-        if gracefully:
-            self.queue.append(('stop monitor thread', ''))
-        else:
-            self.queue.appendleft(('stop monitor thread', ''))
-        if self.monitor_thread.is_alive():
-            self.monitor_thread.join()
-
     def monitor_queue(self):
-
+        """
+        Overloaded for multithreading.
+        """
         while 1:
             self.threads = [running_thread for running_thread in self.threads if running_thread.is_alive()]
             if self.queue and len(self.threads) < self.max_threads:
@@ -55,17 +41,12 @@ class AzureOMSInterface:
                     [running_thread.join() for running_thread in self.threads]
                     return
                 else:
-                    new_thread = threading.Thread(target=self._send_message_to_oms,
+                    new_thread = threading.Thread(target=self._send_message,
                                                   kwargs={"msg": msg, "content_type": content_type}, daemon=True)
                     new_thread.start()
                     self.threads.append(new_thread)
 
-    def send_messages_to_oms(self, *messages, content_type):
-
-        for message in messages:
-            self.queue.append((message, content_type))
-
-    def _send_message_to_oms(self, msg, content_type, retries=3):
+    def _send_message(self, msg, content_type, retries=3):
         """
         Send a single message to a graylog input; the socket must be closed after each individual message,
         otherwise Graylog will interpret it as a single large message.
@@ -77,7 +58,7 @@ class AzureOMSInterface:
             return
         while True:
             try:
-                self.post_data(body=msg_string, log_type=content_type.replace('.', ''), time_generated=time_generated)
+                self._post_data(body=msg_string, log_type=content_type.replace('.', ''), time_generated=time_generated)
             except Exception as e:
                 logging.error("Error sending to OMS: {}. Retries left: {}".format(e, retries))
                 if retries:
@@ -91,7 +72,7 @@ class AzureOMSInterface:
                 self.successfully_sent += 1
                 break
 
-    def build_signature(self, date, content_length, method, content_type, resource):
+    def _build_signature(self, date, content_length, method, content_type, resource):
         """
         Returns authorization header which will be used when sending data into Azure Log Analytics.
         """
@@ -105,7 +86,7 @@ class AzureOMSInterface:
         authorization = "SharedKey {}:{}".format(self.workspace_id, encoded_hash)
         return authorization
 
-    def post_data(self, body, log_type, time_generated):
+    def _post_data(self, body, log_type, time_generated):
         """
         Sends payload to Azure Log Analytics Workspace.
         :param body: payload to send to Azure Log Analytics (json.dumps str)
@@ -117,7 +98,7 @@ class AzureOMSInterface:
         resource = '/api/logs'
         rfc1123date = datetime.datetime.utcnow().strftime('%a, %d %b %Y %H:%M:%S GMT')
         content_length = len(body)
-        signature = self.build_signature(rfc1123date, content_length, method, content_type, resource)
+        signature = self._build_signature(rfc1123date, content_length, method, content_type, resource)
 
         uri = 'https://' + self.workspace_id + '.ods.opinsights.azure.com' + resource + '?api-version=2016-04-01'
 

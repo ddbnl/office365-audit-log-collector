@@ -1,4 +1,4 @@
-# Standard libs
+from . import _Interface
 from collections import deque
 import logging
 import threading
@@ -7,55 +7,15 @@ import json
 import time
 
 
-class GraylogInterface(object):
+class GraylogInterface(_Interface.Interface):
 
-    def __init__(self, graylog_address, graylog_port):
+    def __init__(self, graylog_address=None, graylog_port=None, **kwargs):
 
+        super().__init__(**kwargs)
         self.gl_address = graylog_address
         self.gl_port = graylog_port
-        self.monitor_thread = None
-        self.queue = deque()
-        self.successfully_sent = 0
-        self.unsuccessfully_sent = 0
 
-    def start(self):
-
-        self.monitor_thread = threading.Thread(target=self.monitor_queue, daemon=True)
-        self.monitor_thread.start()
-
-    def stop(self, gracefully=True):
-
-        if gracefully:
-            self.queue.append('stop monitor thread')
-        else:
-            self.queue.appendleft('stop monitor thread')
-        if self.monitor_thread.is_alive():
-            self.monitor_thread.join()
-
-    def monitor_queue(self):
-
-        while 1:
-            if self.queue:
-                msg = self.queue.popleft()
-                if msg == 'stop monitor thread':
-                    return
-                else:
-                    self._send_message_to_graylog(msg=msg)
-
-    def send_messages_to_graylog(self, *messages, content_type):
-
-        for message in messages:
-            self.queue.append(message)
-
-    def _connect_to_graylog_input(self):
-        """
-        Return a socket connected to the Graylog input.
-        """
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.connect((self.gl_address, int(self.gl_port)))
-        return s
-
-    def _send_message_to_graylog(self, msg, retries=3):
+    def _send_message(self, msg, retries=3, **kwargs):
         """
         Send a single message to a graylog input; the socket must be closed after each individual message,
         otherwise Graylog will interpret it as a single large message.
@@ -86,3 +46,11 @@ class GraylogInterface(object):
             logging.error("Error sending message to graylog: {}.".format(e))
         sock.close()
         self.successfully_sent += 1
+
+    def _connect_to_graylog_input(self):
+        """
+        Return a socket connected to the Graylog input.
+        """
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.connect((self.gl_address, int(self.gl_port)))
+        return s

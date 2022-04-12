@@ -1,0 +1,31 @@
+log:
+  path: 'collector.log'
+collect:
+  contentTypes:
+    Audit.General: True
+    Audit.AzureActiveDirectory: True
+    Audit.Exchange: True
+    Audit.SharePoint: True
+    DLP.All: True
+  autoSubscribe: True
+  skipKnownLogs: True
+  resume: False  # Take all logs each time to count the number of active filter hits each interval
+  hoursToCollect: 1  # Period over which to alert, e.g. failed AAD logins over the last hour
+# The PRTG output defines channels which have filters associated to them. The output of the channel will be
+# the number of hits on the filter. E.g. filter for failed AAD logins on a "Failed AAD logins" channel.
+output:
+  prtg:
+    enabled: True
+    channels:
+    - name: Deleted Sharepoint files
+      filters:
+        Audit.SharePoint:
+        - Operation: FileDeleted
+    - name: Failed Azure AD logins
+      filters:
+        Audit.AzureActiveDirectory:
+        - Operation: UserLoginFailed
+    - name: Spoof attempts prevented
+      filters:
+        Audit.General:
+        - Policy: Spoof
