@@ -42,7 +42,7 @@ class GraylogInterface(object):
                 else:
                     self._send_message_to_graylog(msg=msg)
 
-    def send_messages_to_graylog(self, *messages):
+    def send_messages_to_graylog(self, *messages, content_type):
 
         for message in messages:
             self.queue.append(message)

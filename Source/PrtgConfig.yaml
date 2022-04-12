@@ -2,7 +2,7 @@ channels:
   - name: Deleted Sharepoint files
     filters:
       Audit.SharePoint:
-      - Operation: DeletedFile
+      - Operation: FileDeleted
   - name: Failed Azure AD logins
     filters:
       Audit.AzureActiveDirectory:

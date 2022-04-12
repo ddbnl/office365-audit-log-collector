@@ -72,6 +72,9 @@ class PRTGInterface:
     def output(self):
         try:
             csr = CustomSensorResult()
+            for channel in self.config['channels']:
+                if channel['name'] not in self.results:
+                    self.results[channel['name']] = collections.deque()
             for channel_name, messages in self.results.items():
                 csr.add_channel(
                     name=channel_name, value=len(messages), unit='Count')
