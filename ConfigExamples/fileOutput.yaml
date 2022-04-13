@@ -1,5 +1,3 @@
-log:
-  path: 'collector.log'
 collect:
   contentTypes:
     Audit.General: True
@@ -7,10 +5,8 @@ collect:
     Audit.Exchange: True
     Audit.SharePoint: True
     DLP.All: True
-  autoSubscribe: True
   skipKnownLogs: True
   resume: True
-  hoursToCollect: 24
 output:
   file:
     enabled: True

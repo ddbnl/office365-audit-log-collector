@@ -14,20 +14,19 @@ class PRTGInterface(_Interface.Interface):
         self.config = config
         self.results = collections.defaultdict(collections.deque)
 
-    def _send_message(self, message, content_type, **kwargs):
+    def _send_message(self, msg, content_type, **kwargs):
 
         for channel in self.config['channels']:
             if content_type not in channel['filters']:
                 continue
-            self._filter_result(message=message, content_type=content_type, channel=channel)
+            self._filter_result(msg=msg, content_type=content_type, channel=channel)
 
-    def _filter_result(self, message, content_type, channel):
+    def _filter_result(self, msg, content_type, channel):
 
-        for filter_rule in channel['filters'][content_type]:
-            for filter_key, filter_value in filter_rule.items():
-                if filter_key not in message or filter_value.lower() != message[filter_key].lower():
-                    return
-        self.results[channel['name']].append(message)
+        for filter_key, filter_value in channel['filters'][content_type].items():
+            if filter_key not in msg or filter_value.lower() != msg[filter_key].lower():
+                return
+        self.results[channel['name']].append(msg)
 
     def output(self):
         try:

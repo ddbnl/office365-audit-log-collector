@@ -1,8 +1,10 @@
 from Interfaces import AzureOMSInterface, GraylogInterface, PRTGInterface
+import AuditLogSubscriber
 import ApiConnection
 import os
 import sys
 import yaml
+import time
 import json
 import logging
 import datetime
@@ -14,15 +16,17 @@ import threading
 class AuditLogCollector(ApiConnection.ApiConnection):
 
     def __init__(self, content_types=None, resume=True, fallback_time=None, skip_known_logs=True,
-                 log_path='collector.log', debug=False, auto_subscribe=False, max_threads=20,
-                 file_output=False, output_path=None, graylog_output=False, azure_oms_output=False, prtg_output=False,
-                 **kwargs):
+                 log_path='collector.log', debug=False, auto_subscribe=False, max_threads=20, retries=3,
+                 retry_cooldown=3, file_output=False, output_path=None, graylog_output=False, azure_oms_output=False,
+                 prtg_output=False, **kwargs):
         """
         Object that can retrieve all available content blobs for a list of content types and then retrieve those
         blobs and output them to a file or Graylog input (i.e. send over a socket).
         :param content_types: list of content types to retrieve (e.g. 'Audit.Exchange', 'Audit.Sharepoint')
         :param resume: Resume from last known run time for each content type (Bool)
         :param fallback_time: if no last run times are found to resume from, run from this start time (Datetime)
+        :param retries: Times to retry retrieving a content blob if it fails (int)
+        :param retry_cooldown: Seconds to wait before retrying retrieving a content blob (int)
         :param skip_known_logs: record retrieved content blobs and log ids, skip them next time (Bool)
         :param file_output: path of file to output audit logs to (str)
         :param log_path: path of file to log to (str)
@@ -38,6 +42,8 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         self.resume = resume
         self._fallback_time = fallback_time or datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(
             hours=23)
+        self.retries = retries
+        self.retry_cooldown = retry_cooldown
         self.skip_known_logs = skip_known_logs
         self.log_path = log_path
         self.debug = debug
@@ -64,6 +70,7 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         self.retrieve_content_threads = collections.deque()
         self.run_started = None
         self.logs_retrieved = 0
+        self.errors_retrieving = 0
 
     @property
     def all_content_types(self):
@@ -105,6 +112,10 @@ class AuditLogCollector(ApiConnection.ApiConnection):
                     config['collect']['contentTypes'][x] is True]
             if 'maxThreads' in config['collect']:
                 self.max_threads = config['collect']['maxThreads']
+            if 'retries' in config['collect']:
+                self.retries = config['collect']['retries']
+            if 'retryCooldown' in config['collect']:
+                self.retry_cooldown = config['collect']['retryCooldown']
             if 'autoSubscribe' in config['collect']:
                 self.auto_subscribe = config['collect']['autoSubscribe']
             if 'skipKnownLogs' in config['collect']:
@@ -192,6 +203,8 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         """
         Make sure that self.run_once can be called multiple times by resetting to an initial state.
         """
+        if self.auto_subscribe:
+            self._auto_subscribe()
         if self.resume:
             self._get_last_run_times()
         if self.skip_known_logs:
@@ -237,8 +250,8 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         """
         Write run statistics to log file / console.
         """
-        logging.info("Finished. Total logs retrieved: {}. Run time: {}.".format(
-            self.logs_retrieved, datetime.datetime.now() - self.run_started))
+        logging.info("Finished. Total logs retrieved: {}. Total logs with errors: {}. Run time: {}.".format(
+            self.logs_retrieved, self.errors_retrieving, datetime.datetime.now() - self.run_started))
         if self.azure_oms_output:
             logging.info("Azure OMS output report: {} successfully sent, {} errors".format(
                 self.azure_oms_interface.successfully_sent, self.azure_oms_interface.unsuccessfully_sent))
@@ -287,8 +300,25 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         """
         Start a thread monitoring the list containing blobs that need collecting.
         """
-        self.monitor_thread = threading.Thread(target=self.monitor_blobs_to_collect, daemon=True)
+        self.monitor_thread = threading.Thread(target=self._monitor_blobs_to_collect, daemon=True)
         self.monitor_thread.start()
+
+    def _auto_subscribe(self):
+        """
+        Subscribe to all content types that are set to be retrieved.
+        """
+        subscriber = AuditLogSubscriber.AuditLogSubscriber(tenant_id=self.tenant_id, client_key=self.client_key,
+                                                           secret_key=self.secret_key)
+        status = subscriber.get_sub_status()
+        if status == '':
+            raise RuntimeError("Auto subscribe enabled but could not get subscription status")
+        unsubscribed_content_types = self.content_types.copy()
+        for s in status:
+            if s['contentType'] in self.content_types and s['status'].lower() == 'enabled':
+                unsubscribed_content_types.remove(s['contentType'])
+        for content_type in unsubscribed_content_types:
+            logging.info("Auto subscribing to: {}".format(content_type))
+            subscriber.set_sub_status(content_type=content_type, action='start')
 
     def _get_all_available_content(self, start_time=None):
         """
@@ -316,7 +346,8 @@ class AuditLogCollector(ApiConnection.ApiConnection):
             current_time = datetime.datetime.now(datetime.timezone.utc)
             formatted_end_time = str(current_time).replace(' ', 'T').rsplit('.', maxsplit=1)[0]
             formatted_start_time = str(start_time).replace(' ', 'T').rsplit('.', maxsplit=1)[0]
-            logging.info("Start time: {}. End time: {}.".format(formatted_start_time, formatted_end_time))
+            logging.info("Retrieving {}. Start time: {}. End time: {}.".format(
+                content_type, formatted_start_time, formatted_end_time))
             response = self.make_api_request(url='subscriptions/content?contentType={0}&startTime={1}&endTime={2}'.format(
                 content_type, formatted_start_time, formatted_end_time))
             self.blobs_to_collect[content_type] += response.json()
@@ -343,7 +374,7 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         if self.graylog_output:
             self.graylog_interface.start()
 
-    def stop_interfaces(self):
+    def _stop_interfaces(self):
 
         if self.azure_oms_output:
             self.azure_oms_interface.stop()
@@ -352,7 +383,7 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         if self.graylog_output:
             self.graylog_interface.stop()
 
-    def monitor_blobs_to_collect(self):
+    def _monitor_blobs_to_collect(self):
         """
         Wait for the 'retrieve_available_content' function to retrieve content URI's. Once they become available
         start retrieving in a background thread.
@@ -363,15 +394,17 @@ class AuditLogCollector(ApiConnection.ApiConnection):
             threads = [thread for thread in threads if thread.is_alive()]
             if self.done_collecting_available_content and self.done_retrieving_content and not threads:
                 break
-            if not self.blobs_to_collect or len(threads) >= self.max_threads:
+            if not self.blobs_to_collect:
                 continue
             for content_type, blobs_to_collect in self.blobs_to_collect.copy().items():
+                if len(threads) >= self.max_threads:
+                    break
                 if self.blobs_to_collect[content_type]:
                     blob_json = self.blobs_to_collect[content_type].popleft()
-                    self.collect_blob(blob_json=blob_json, content_type=content_type, threads=threads)
-        self.stop_interfaces()
+                    self._collect_blob(blob_json=blob_json, content_type=content_type, threads=threads)
+        self._stop_interfaces()
 
-    def collect_blob(self, blob_json, content_type, threads):
+    def _collect_blob(self, blob_json, content_type, threads):
         """
         Collect a single content blob in a thread.
         :param blob_json: JSON
@@ -381,17 +414,17 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         if blob_json and 'contentUri' in blob_json:
             logging.log(level=logging.DEBUG, msg='Retrieving content blob: "{0}"'.format(blob_json))
             threads.append(threading.Thread(
-                target=self.retrieve_content, daemon=True,
-                kwargs={'content_json': blob_json, 'content_type': content_type}))
+                target=self._retrieve_content, daemon=True,
+                kwargs={'content_json': blob_json, 'content_type': content_type, 'retries': self.retries}))
             threads[-1].start()
 
-    def retrieve_content(self, content_json, content_type):
+    def _retrieve_content(self, content_json, content_type, retries):
         """
         Get an available content blob. If it exists in the list of known content blobs it is skipped to ensure
         idempotence.
         :param content_json: JSON dict of the content blob as retrieved from the API (dict)
         :param content_type: Type of API being retrieved for, e.g. 'Audit.Exchange' (str)
-        :return:
+        :param retries: Times to retry retrieving a content blob if it fails (int)
         """
         if self.skip_known_logs and self.known_content and content_json['contentId'] in self.known_content:
             return
@@ -400,8 +433,13 @@ class AuditLogCollector(ApiConnection.ApiConnection):
             if not results:
                 return
         except Exception as e:
-            logging.error("Error retrieving content: {}".format(e))
-            return
+            if retries:
+                time.sleep(self.retry_cooldown)
+                return self._retrieve_content(content_json=content_json, content_type=content_type, retries=retries - 1)
+            else:
+                self.errors_retrieving += 1
+                logging.error("Error retrieving content: {}".format(e))
+                return
         else:
             self._handle_retrieved_content(content_json=content_json, content_type=content_type, results=results)
 
@@ -421,18 +459,18 @@ class AuditLogCollector(ApiConnection.ApiConnection):
                     results.remove(log)
                     continue
                 self.known_logs[log['Id']] = log['CreationTime']
-            if self.filters and not self.check_filters(log=log, content_type=content_type):
+            if self.filters and not self._check_filters(log=log, content_type=content_type):
                 results.remove(log)
         self.logs_retrieved += len(results)
-        self.output_results(results=results, content_type=content_type)
+        self._output_results(results=results, content_type=content_type)
 
-    def output_results(self, results, content_type):
+    def _output_results(self, results, content_type):
         """
         :param content_type: Type of API being retrieved for, e.g. 'Audit.Exchange' (str)
         :param results: list of JSON
         """
         if self.file_output:
-            self.output_results_to_file(results=results)
+            self._output_results_to_file(*results)
         if self.prtg_output:
             self.prtg_interface.send_messages(*results, content_type=content_type)
         if self.graylog_output:
@@ -440,7 +478,7 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         if self.azure_oms_output:
             self.azure_oms_interface.send_messages(*results, content_type=content_type)
 
-    def check_filters(self, log, content_type):
+    def _check_filters(self, log, content_type):
         """
         :param log: JSON
         :param content_type: Type of API being retrieved for, e.g. 'Audit.Exchange' (str)
@@ -452,13 +490,14 @@ class AuditLogCollector(ApiConnection.ApiConnection):
                     return False
         return True
 
-    def output_results_to_file(self, results):
+    def _output_results_to_file(self, *results):
         """
         Dump received JSON messages to a file.
         :param results: retrieved JSON (dict)
         """
-        with open(self.output_path, 'a') as ofile:
-            ofile.write("{}\n".format(json.dump(obj=results, fp=ofile)))
+        for result in results:
+            with open(self.output_path, 'a') as ofile:
+                ofile.write("{}\n".format(json.dumps(obj=result)))
 
     def _add_known_log(self):
         """
@@ -572,6 +611,8 @@ if __name__ == "__main__":
     parser.add_argument('secret_key', type=str, help='Secret key generated by Azure application', action='store')
     parser.add_argument('--config', metavar='config', type=str, help='Path to YAML config file',
                         action='store', dest='config')
+    parser.add_argument('--interactive-subscriber', action='store_true',
+                        help='Manually (un)subscribe to audit log feeds', dest='interactive_subscriber')
     parser.add_argument('--general', action='store_true', help='Retrieve General content', dest='general')
     parser.add_argument('--exchange', action='store_true', help='Retrieve Exchange content', dest='exchange')
     parser.add_argument('--azure_ad', action='store_true', help='Retrieve Azure AD content', dest='azure_ad')
@@ -609,6 +650,12 @@ if __name__ == "__main__":
                         dest='graylog_port')
     args = parser.parse_args()
     argsdict = vars(args)
+
+    if argsdict['interactive_subscriber']:
+        subscriber = AuditLogSubscriber.AuditLogSubscriber(
+            tenant_id=argsdict['tenant_id'], secret_key=argsdict['secret_key'], client_key=argsdict['client_key'])
+        subscriber.interactive()
+        quit(0)
 
     content_types = []
     if argsdict['general']:

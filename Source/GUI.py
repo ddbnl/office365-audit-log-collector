@@ -5,11 +5,18 @@ from kivy.config import Config
 from kivy.clock import Clock
 from kivy.properties import StringProperty
 import os
+import sys
 import json
 import time
 import logging
 import threading
 import datetime
+root_path = os.path.split(__file__)[0]
+if getattr(sys, 'frozen', False):
+    icon_path = os.path.join(sys._MEIPASS, os.path.join(root_path, "icon.ico"))
+else:
+    icon_path = os.path.join(root_path, "icon.ico")
+Config.set('kivy','window_icon', icon_path)
 Config.set('graphics', 'resizable', False)
 Config.set('graphics', 'width', '450')
 Config.set('graphics', 'height', '600')
@@ -154,9 +161,10 @@ class GUI(MDApp):
 
     def build(self):
 
+        self.icon = icon_path
         self.theme_cls.theme_style = "Dark"
         from UX import MainWidget
-        Builder.load_file(os.path.join(os.path.split(__file__)[0], 'UX/MainWidget.kv'))
+        Builder.load_file(os.path.join(root_path, 'UX/MainWidget.kv'))
         self.root_widget = MainWidget.MainWidget()
         prefix = self.root_widget.ids.tab_widget
         prefix.ids.config_widget.ids.clear_known_content.disabled = not os.path.exists('known_content')
@@ -231,14 +239,16 @@ class GUI(MDApp):
         settings['gl_address'] = prefix.ids.config_widget.ids.graylog_ip.text
         settings['gl_port'] = prefix.ids.config_widget.ids.graylog_port.text
         settings['debug_logging'] = prefix.ids.config_widget.ids.log_switch.active
-        with open('gui_settings.json', 'w') as ofile:
+        settings_file = os.path.join(root_path, 'gui_settings.json')
+        with open(settings_file, 'w') as ofile:
             json.dump(settings, ofile)
 
     def load_settings(self):
 
-        if not os.path.exists('gui_settings.json'):
+        settings_file = os.path.join(root_path, 'gui_settings.json')
+        if not os.path.exists(settings_file):
             return
-        with open('gui_settings.json', 'r') as ofile:
+        with open(settings_file, 'r') as ofile:
             settings = json.load(ofile)
         prefix = self.root_widget.ids.tab_widget
         self.tenant_id = settings['tenant_id']
