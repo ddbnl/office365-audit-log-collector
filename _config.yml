@@ -8,6 +8,7 @@ kramdown:
   math_engine: mathjax
   syntax_highlighter: rouge
 title: "Office and Azure Audit Log Collector"
+description: "Collect / retrieve Office365, Azure and DLP audit logs and output to PRTG, Azure Log Analytics Workspace, Graylog, and/or file output."
 theme: jekyll-theme-slate
 plugins:
   - jekyll-seo-tag
