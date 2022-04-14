@@ -22,9 +22,11 @@ filter:  # Only logs that match ALL filters for a content type are collected. Le
   Audit.SharePoint:
   DLP.All:
 output:
-  file:
+  file:  # CSV output
     enabled: False
-    path: 'output.txt'
+    separateByContentType: True  # Creates a separate CSV file for each content type, appends content name to path
+    path: 'output.csv'
+    separator: ';'
   azureLogAnalytics:
     enabled: False
     workspaceId:

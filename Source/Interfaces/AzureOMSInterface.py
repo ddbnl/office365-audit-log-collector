@@ -118,6 +118,6 @@ class AzureOMSInterface(_Interface.Interface):
 
         response.close()
         if 200 <= status_code <= 299:
-            logging.info('Accepted payload:' + body)
+            logging.debug('Accepted payload:' + body)
         else:
             raise RuntimeError("Unable to send to OMS with {}: {} ".format(status_code, json_output))
