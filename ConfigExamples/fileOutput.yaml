@@ -11,3 +11,5 @@ output:
   file:
     enabled: True
     path: 'output.txt'
+    separateByContentType: True
+    separator: ';'

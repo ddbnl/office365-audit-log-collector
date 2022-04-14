@@ -1,4 +1,4 @@
-from Interfaces import AzureOMSInterface, GraylogInterface, PRTGInterface
+from Interfaces import AzureOMSInterface, GraylogInterface, PRTGInterface, FileInterface
 import AuditLogSubscriber
 import ApiConnection
 import os
@@ -51,7 +51,7 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         self.filters = {}
 
         self.file_output = file_output
-        self.output_path = output_path
+        self.file_interface = FileInterface.FileInterface(**kwargs)
         self.azure_oms_output = azure_oms_output
         self.azure_oms_interface = AzureOMSInterface.AzureOMSInterface(**kwargs)
         self.graylog_output = graylog_output
@@ -151,7 +151,11 @@ class AuditLogCollector(ApiConnection.ApiConnection):
             if 'enabled' in config['output']['file']:
                 self.file_output = config['output']['file']['enabled']
             if 'path' in config['output']['file']:
-                self.output_path = config['output']['file']['path']
+                self.file_interface.output_path = config['output']['file']['path']
+            if 'separateByContentType' in config['output']['file']:
+                self.file_interface.separate_by_content_type = config['output']['file']['separateByContentType']
+            if 'separator' in config['output']['file']:
+                self.file_interface.separator = config['output']['file']['separator']
 
     def _load_azure_log_analytics_output_config(self, config):
         """
@@ -367,6 +371,8 @@ class AuditLogCollector(ApiConnection.ApiConnection):
 
     def _start_interfaces(self):
 
+        if self.file_output:
+            self.file_interface.start()
         if self.azure_oms_output:
             self.azure_oms_interface.start()
         if self.prtg_output:
@@ -376,6 +382,8 @@ class AuditLogCollector(ApiConnection.ApiConnection):
 
     def _stop_interfaces(self):
 
+        if self.file_output:
+            self.file_interface.stop()
         if self.azure_oms_output:
             self.azure_oms_interface.stop()
         if self.prtg_output:
@@ -470,7 +478,7 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         :param results: list of JSON
         """
         if self.file_output:
-            self._output_results_to_file(*results)
+            self.file_interface.send_messages(*results, content_type=content_type)
         if self.prtg_output:
             self.prtg_interface.send_messages(*results, content_type=content_type)
         if self.graylog_output:
@@ -489,15 +497,6 @@ class AuditLogCollector(ApiConnection.ApiConnection):
                 if log_filter_key not in log or log[log_filter_key].lower() != log_filter_value.lower():
                     return False
         return True
-
-    def _output_results_to_file(self, *results):
-        """
-        Dump received JSON messages to a file.
-        :param results: retrieved JSON (dict)
-        """
-        for result in results:
-            with open(self.output_path, 'a') as ofile:
-                ofile.write("{}\n".format(json.dumps(obj=result)))
 
     def _add_known_log(self):
         """
@@ -677,7 +676,7 @@ if __name__ == "__main__":
         tenant_id=argsdict['tenant_id'], secret_key=argsdict['secret_key'], client_key=argsdict['client_key'],
         content_types=content_types, publisher_id=argsdict['publisher_id'], resume=argsdict['resume'],
         fallback_time=fallback_time, skip_known_logs=argsdict['skip_known_logs'], log_path=argsdict['log_path'],
-        file_output=argsdict['file'], output_path=argsdict['output_path'], debug=argsdict['debug_logging'],
+        file_output=argsdict['file'], path=argsdict['output_path'], debug=argsdict['debug_logging'],
         prtg_output=argsdict['prtg'],
         azure_oms_output=argsdict['azure'], workspace_id=argsdict['azure_workspace'],
         shared_key=argsdict['azure_key'],
