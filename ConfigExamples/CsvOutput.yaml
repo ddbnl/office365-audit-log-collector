@@ -10,6 +10,6 @@ collect:
 output:
   file:
     enabled: True
-    path: 'output.txt'
+    path: 'output'
     separateByContentType: True
     separator: ';'

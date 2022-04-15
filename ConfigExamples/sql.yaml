@@ -1,0 +1,12 @@
+collect:
+  contentTypes:
+    Audit.General: True
+    Audit.AzureActiveDirectory: True
+    Audit.Exchange: True
+    Audit.SharePoint: True
+    DLP.All: True
+output:
+  sql:
+    enabled: True
+    cacheSize: 500000
+    chunkSize: 2000

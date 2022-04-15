@@ -43,3 +43,8 @@ class PRTGInterface(_Interface.Interface):
             csr.error = "Python Script execution error: %s" % str(e)
             print(csr.json_result)
 
+    def exit_callback(self):
+
+        super().exit_callback()
+        self.output()
+
