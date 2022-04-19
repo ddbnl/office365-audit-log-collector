@@ -3,8 +3,6 @@ import os
 from . import _Interface
 import collections
 import pandas
-import threading
-import time
 
 
 class FileInterface(_Interface.Interface):

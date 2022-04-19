@@ -133,6 +133,13 @@ If you are running this script to get audit events in an Azure Analytics Workspa
 - Get the ID and key from "Agent management";
 - You do not need to prepare any tables or other settings.
 
+### (optional) Creating an Azure Table / Blob account:
+
+If you are running this script to get audit events in an Azure Table and/or Blob you will need a storage account and connection string:
+- Create a storage account from "Create resource" in Azure (no special configuration required);
+- Get the connection string from 'Access keys'
+- You do not need to prepare any tables or blob containers as they are created in the storage account if they do not exist.
+
 ### (optional) Creating a PRTG sensor
 
 To run with PRTG you must create a sensor:

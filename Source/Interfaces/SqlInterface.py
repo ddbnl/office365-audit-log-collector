@@ -89,7 +89,6 @@ class SqlInterface(_Interface.Interface):
         """
         Flatten columns that a list as value. E.g. column "ColumnA: [1,2,3]" becomes:
         "ColumnA_0: 1, ColumnA_1: 2, ColumnA_2: 3".
-        Logs are processed individually as they come in, so only the first value of a column needs to be checked.
         :param df: pandas.DataFrame.
         :return: pandas.DataFrame
         """
