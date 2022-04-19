@@ -12,11 +12,13 @@ If you have any issues or questions, feel free to create an issue in this repo.
   - DLP.All
 - The following outputs are supported:
   - Azure Analytics Workspace (OMS)
+  - Azure Storage Table
+  - Azure Storage Blob
   - PRTG Network Monitor
   - ( Azure ) SQL server
   - Graylog (or any other source that accepts a simple socket connection)
   - CSV Local file
-  - Power BI (indirectly through SQL or CSV)
+  - Power BI (indirectly through SQL, CSV, Azure Tables or Azure Blob)
 
 Simply download the executable you need from the Windows or Linux folder and copy a config file from the ConfigExamples folder that suits your need:
 - Windows:

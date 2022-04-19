@@ -3,8 +3,6 @@ collect:
     Audit.General: True
     Audit.AzureActiveDirectory: True
     Audit.SharePoint: True
-  skipKnownLogs: True
-  resume: True
 # Collect logs concerning spoofing prevention in Audit.General, deleted files from Audit.SharePoint
 # and login failures from Audit.AzureActiveDirectory
 filter:

@@ -6,8 +6,10 @@ collect:
     Audit.SharePoint: True
     DLP.All: True
 output:
-  file:
+  azureBlob:
     enabled: True
-    path: 'output'
+    containerName: audit-logs
+    blobName: AuditLog
+    tempPath: 'output'
     separateByContentType: True
     separator: ';'

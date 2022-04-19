@@ -29,8 +29,13 @@ class FileInterface(_Interface.Interface):
     def _path_for(self, content_type):
 
         if content_type not in self.paths:
-            self.paths[content_type] = "{}_{}.csv".format(self.path, content_type.replace('.', '')) \
-                if self.separate_by_content_type else self.path
+            if not self.separate_by_content_type:
+                self.paths[content_type] = self.path
+            else:
+                path, file_name = os.path.split(self.path)
+                file_name = file_name.strip('.csv')
+                file_name = "{}_{}.csv".format(file_name, content_type.replace('.', ''))
+                self.paths[content_type] = os.path.join(path, file_name)
         return self.paths[content_type]
 
     def _send_message(self, msg, content_type, **kwargs):

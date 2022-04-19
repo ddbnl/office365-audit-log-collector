@@ -27,6 +27,7 @@ output:
     separateByContentType: True  # Creates a separate CSV file for each content type, appends content name to path
     path: 'output'
     separator: ';'
+    cacheSize: 500000  # Amount of logs to cache until each CSV commit, larger=faster but eats more memory
   azureLogAnalytics:
     enabled: False
     workspaceId:
@@ -34,6 +35,14 @@ output:
   azureTable:  # Provide connection string to executable at runtime with --table-string
     enabled: False
     tableName: AuditLogs  # Name of the table inside the storage account
+  azureBlob:  # Write CSV to a blob container. Provide connection string to executable at runtime with --blob-string
+    enabled: False
+    containerName: AuditLogs  # Name of the container inside storage account
+    blobName: AuditLog  # When separatedByContentType is true, this is used as file prefix and becomes e.g. AuditLog_AuditExchange.csv
+    tempPath: './output'
+    separateByContentType: True
+    separator: ';'
+    cacheSize: 500000  # Amount of logs to cache until each CSV commit, larger=faster but eats more memory
   sql:  # Provide connection string to executable at runtime with --sql-string
     enabled: False
     cacheSize: 500000  # Amount of logs to cache until each SQL commit, larger=faster but eats more memory
