@@ -15,8 +15,10 @@ If you have any issues or questions, feel free to create an issue in this repo.
 - The following outputs are supported:
   - Azure Analytics Workspace (OMS)
   - PRTG Network Monitor
+  - ( Azure ) SQL server
   - Graylog (or any other source that accepts a simple socket connection)
-  - Local file
+  - CSV Local file
+  - Power BI (indirectly through SQL or CSV)
 
 Simply download the executable you need from the Windows or Linux folder and copy a config file from the ConfigExamples folder that suits your need:
 - Windows:
@@ -42,11 +44,14 @@ See the following link for more info on the management APIs: https://msdn.micros
 
 ## Roadmap:
 
+- Add AzureBlob and AzureTable outputs
 - Automate onboarding as much as possible to make it easier to use
 - Make a container that runs this script
 - Create a tutorial for automatic onboarding + docker container for the easiest way to run this
 
 ## Latest changes:
+- Added SQL output for Power BI
+- Changed file to CSV output
 - Added PRTG output
 - Added filters
 - Added YAML config file
@@ -65,14 +70,15 @@ See the following link for more info on the management APIs: https://msdn.micros
 ## Use cases:
 
 - Ad-lib log retrieval;
-- Scheduling regular execution to retrieve the full audit trail.
+- Scheduling regular execution to retrieve the full audit trail in SIEM
 - Output to PRTG for alerts on audit logs
+- Output to (Azure) SQL / CSV for Power BI
 
 ## Features:
 
 - Subscribe to the audit logs of your choice through the --interactive-subscriber switch, or automatically when collecting logs;
 - Collect General, Exchange, Sharepoint, Azure active directory and/or DLP audit logs through the collector script;
-- Output to file, PRTG, Azure Log Analytics or to a Graylog input (i.e. send the logs over a network socket).
+- Output to CSV, PRTG, Azure Log Analytics, SQL or to a Graylog input (i.e. send the logs over a network socket).
 
 ## Requirements:
 - Office365 tenant;
@@ -142,6 +148,18 @@ To run with PRTG you must create a sensor:
 Probably at least 300 seconds. Run the script manually first to check how long it takes.
 - Match the interval of the sensor to the amount of hours of logs to retrieve. If your interval is 1 hour, hoursToCollect
 in the config file should also be set to one hour.
+
+### (optional) Using ( Azure ) SQL
+
+If you are running this script to get audit events in an SQL database you will need an ODBC driver and a connection string
+- The collector uses PYODBC, which needs an ODBC driver, examples on how to install this:
+  - On windows: https://docs.microsoft.com/en-us/sql/connect/odbc/download-odbc-driver-for-sql-server?view=sql-server-ver15
+  - On Linux: https://docs.microsoft.com/en-us/sql/connect/odbc/linux-mac/installing-the-microsoft-odbc-driver-for-sql-server?view=sql-server-ver15#ubuntu17
+- Connection string might look like this: "Driver={ODBC Driver 17 for SQL Server};Server=tcp:mydatabase.com,1433;Database=mydatabase;Uid=myuser;Pwd=mypassword;Encrypt
+=yes;TrustServerCertificate=no;Connection Timeout=30;"
+- Use SQL example config and pass --sql-string parameter when running the collector with your connection string
+
+
 
 ### (optional) Creating a Graylog input
 
