@@ -38,9 +38,15 @@ class Interface(object):
             if self.queue:
                 msg, content_type = self.queue.popleft()
                 if msg == 'stop monitor thread':
-                    return
+                    return self.exit_callback()
                 else:
                     self._send_message(msg=msg, content_type=content_type)
+
+    def exit_callback(self):
+        """
+        Called right before the interface is stopped.
+        """
+        pass
 
     def send_messages(self, *messages, content_type):
         """

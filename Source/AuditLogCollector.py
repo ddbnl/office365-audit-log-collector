@@ -1,4 +1,4 @@
-from Interfaces import AzureOMSInterface, GraylogInterface, PRTGInterface, FileInterface
+from Interfaces import AzureOMSInterface, SqlInterface, GraylogInterface, PRTGInterface, FileInterface
 import AuditLogSubscriber
 import ApiConnection
 import os
@@ -17,7 +17,7 @@ class AuditLogCollector(ApiConnection.ApiConnection):
 
     def __init__(self, content_types=None, resume=True, fallback_time=None, skip_known_logs=True,
                  log_path='collector.log', debug=False, auto_subscribe=False, max_threads=20, retries=3,
-                 retry_cooldown=3, file_output=False, output_path=None, graylog_output=False, azure_oms_output=False,
+                 retry_cooldown=3, file_output=False, sql_output=False, graylog_output=False, azure_oms_output=False,
                  prtg_output=False, **kwargs):
         """
         Object that can retrieve all available content blobs for a list of content types and then retrieve those
@@ -32,7 +32,6 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         :param log_path: path of file to log to (str)
         :param debug: enable debug logging (Bool)
         :param auto_subscribe: automatically subscribe to audit log feeds for which content is retrieved (Bool)
-        :param output_path: path to output retrieved logs to (None=no file output) (string)
         :param graylog_output: Enable graylog Interface (Bool)
         :param azure_oms_output: Enable Azure workspace analytics OMS Interface (Bool)
         :param prtg_output: Enable PRTG output (Bool)
@@ -44,6 +43,7 @@ class AuditLogCollector(ApiConnection.ApiConnection):
             hours=23)
         self.retries = retries
         self.retry_cooldown = retry_cooldown
+        self.max_threads = max_threads
         self.skip_known_logs = skip_known_logs
         self.log_path = log_path
         self.debug = debug
@@ -54,11 +54,12 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         self.file_interface = FileInterface.FileInterface(**kwargs)
         self.azure_oms_output = azure_oms_output
         self.azure_oms_interface = AzureOMSInterface.AzureOMSInterface(**kwargs)
+        self.sql_output = sql_output
+        self.sql_interface = SqlInterface.SqlInterface(**kwargs)
         self.graylog_output = graylog_output
         self.graylog_interface = GraylogInterface.GraylogInterface(**kwargs)
         self.prtg_output = prtg_output
         self.prtg_interface = PRTGInterface.PRTGInterface(**kwargs)
-        self.max_threads = max_threads
 
         self._last_run_times = {}
         self._known_content = {}
@@ -71,6 +72,18 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         self.run_started = None
         self.logs_retrieved = 0
         self.errors_retrieving = 0
+
+    @property
+    def all_interfaces(self):
+
+        return {self.file_interface: self.file_output, self.azure_oms_interface: self.azure_oms_output,
+                self.sql_interface: self.sql_output, self.graylog_interface: self.graylog_output,
+                self.prtg_interface: self.prtg_output}
+
+    @property
+    def all_enabled_interfaces(self):
+
+        return [interface for interface, enabled in self.all_interfaces.items() if enabled]
 
     @property
     def all_content_types(self):
@@ -140,6 +153,7 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         if 'output' in config:
             self._load_file_output_config(config=config)
             self._load_azure_log_analytics_output_config(config=config)
+            self._load_sql_output_config(config=config)
             self._load_graylog_output_config(config=config)
             self._load_prtg_output_config(config=config)
 
@@ -168,6 +182,18 @@ class AuditLogCollector(ApiConnection.ApiConnection):
                 self.azure_oms_interface.workspace_id = config['output']['azureLogAnalytics']['workspaceId']
             if 'sharedKey' in config['output']['azureLogAnalytics']:
                 self.azure_oms_interface.shared_key = config['output']['azureLogAnalytics']['sharedKey']
+
+    def _load_sql_output_config(self, config):
+        """
+        :param config: str
+        """
+        if 'sql' in config['output']:
+            if 'enabled' in config['output']['sql']:
+                self.sql_output = config['output']['sql']['enabled']
+            if 'cacheSize' in config['output']['sql']:
+                self.sql_interface.cache_size = config['output']['sql']['cacheSize']
+            if 'chunkSize' in config['output']['sql']:
+                self.sql_interface.chunk_size = config['output']['sql']['chunkSize']
 
     def _load_graylog_output_config(self, config):
         """
@@ -217,10 +243,9 @@ class AuditLogCollector(ApiConnection.ApiConnection):
             self._clean_known_content()
             self._clean_known_logs()
         self.logs_retrieved = 0
-        self.graylog_interface.successfully_sent = 0
-        self.graylog_interface.unsuccessfully_sent = 0
-        self.azure_oms_interface.successfully_sent = 0
-        self.azure_oms_interface.unsuccessfully_sent = 0
+        for interface in self.all_enabled_interfaces:
+            interface.successfully_sent = 0
+            interface.unsuccessfully_sent = 0
         self.run_started = datetime.datetime.now()
 
     def run_once(self, start_time=None):
@@ -246,10 +271,6 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         if self.resume and self._last_run_times:
             with open('last_run_times', 'w') as ofile:
                 json.dump(fp=ofile, obj=self._last_run_times)
-        if self.file_output:
-            self.file_interface.output()
-        if self.prtg_output:
-            self.prtg_interface.output()
         self._log_statistics()
 
     def _log_statistics(self):
@@ -258,12 +279,9 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         """
         logging.info("Finished. Total logs retrieved: {}. Total logs with errors: {}. Run time: {}.".format(
             self.logs_retrieved, self.errors_retrieving, datetime.datetime.now() - self.run_started))
-        if self.azure_oms_output:
-            logging.info("Azure OMS output report: {} successfully sent, {} errors".format(
-                self.azure_oms_interface.successfully_sent, self.azure_oms_interface.unsuccessfully_sent))
-        if self.graylog_output:
-            logging.info("Graylog output report: {} successfully sent, {} errors".format(
-                self.graylog_interface.successfully_sent, self.graylog_interface.unsuccessfully_sent))
+        for interface in self.all_enabled_interfaces:
+            logging.info("{} reports: {} successfully sent, {} errors".format(
+                interface.__class__.__name__, interface.successfully_sent, interface.unsuccessfully_sent))
 
     def _get_last_run_times(self):
         """
@@ -373,25 +391,13 @@ class AuditLogCollector(ApiConnection.ApiConnection):
 
     def _start_interfaces(self):
 
-        if self.file_output:
-            self.file_interface.start()
-        if self.azure_oms_output:
-            self.azure_oms_interface.start()
-        if self.prtg_output:
-            self.prtg_interface.start()
-        if self.graylog_output:
-            self.graylog_interface.start()
+        for interface in self.all_enabled_interfaces:
+            interface.start()
 
     def _stop_interfaces(self):
 
-        if self.file_output:
-            self.file_interface.stop()
-        if self.azure_oms_output:
-            self.azure_oms_interface.stop()
-        if self.prtg_output:
-            self.prtg_interface.stop()
-        if self.graylog_output:
-            self.graylog_interface.stop()
+        for interface in self.all_enabled_interfaces:
+            interface.stop()
 
     def _monitor_blobs_to_collect(self):
         """
@@ -479,14 +485,8 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         :param content_type: Type of API being retrieved for, e.g. 'Audit.Exchange' (str)
         :param results: list of JSON
         """
-        if self.file_output:
-            self.file_interface.send_messages(*results, content_type=content_type)
-        if self.prtg_output:
-            self.prtg_interface.send_messages(*results, content_type=content_type)
-        if self.graylog_output:
-            self.graylog_interface.send_messages(*results, content_type=content_type)
-        if self.azure_oms_output:
-            self.azure_oms_interface.send_messages(*results, content_type=content_type)
+        for interface in self.all_enabled_interfaces:
+            interface.send_messages(*results, content_type=content_type)
 
     def _check_filters(self, log, content_type):
         """
@@ -612,6 +612,8 @@ if __name__ == "__main__":
     parser.add_argument('secret_key', type=str, help='Secret key generated by Azure application', action='store')
     parser.add_argument('--config', metavar='config', type=str, help='Path to YAML config file',
                         action='store', dest='config')
+    parser.add_argument('--sql-string', metavar='sql_string', type=str,
+                        help='Connection string for SQL output interface', action='store', dest='sql_string')
     parser.add_argument('--interactive-subscriber', action='store_true',
                         help='Manually (un)subscribe to audit log feeds', dest='interactive_subscriber')
     parser.add_argument('--general', action='store_true', help='Retrieve General content', dest='general')
@@ -683,7 +685,8 @@ if __name__ == "__main__":
         azure_oms_output=argsdict['azure'], workspace_id=argsdict['azure_workspace'],
         shared_key=argsdict['azure_key'],
         gl_address=argsdict['graylog_addr'], gl_port=argsdict['graylog_port'],
-        graylog_output=argsdict['graylog'])
+        graylog_output=argsdict['graylog'],
+        sql_connection_string=argsdict['sql_string'])
     if argsdict['config']:
         collector.load_config(path=argsdict['config'])
     collector.init_logging()

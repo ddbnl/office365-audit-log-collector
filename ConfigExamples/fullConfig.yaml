@@ -31,6 +31,10 @@ output:
     enabled: False
     workspaceId:
     sharedKey:
+  sql:
+    enabled: False
+    cacheSize: 500000  # Amount of logs to cache until each SQL commit, larger=faster but eats more memory
+    chunkSize: 2000  # Amount of rows to write simultaneously to SQL, in most cases just set it as high as your DB allows. COUNT errors = too high
   graylog:
     enabled: False
     address:
