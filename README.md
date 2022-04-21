@@ -5,7 +5,7 @@
 Collect/retrieve Office365, Azure and DLP audit logs, optionally filter them, then send them to one or more outputs such as file, PRTG, Azure Log Analytics or Graylog.
 Onboarding is easy and takes only a few minutes (steps described below). There are Windows and Linux executables, and an optional GUI for Windows only.
 Easy configuration with a YAML config file (see the 'ConfigExamples' folder for reference).
-If you have any issues or questions, feel free to create an issue in this repo.
+If you have any issues or questions, or requests for additional interfaces, feel free to create an issue in this repo.
 - The following Audit logs can be extracted:
   - Audit.General
   - Audit.AzureActiveDirectory
@@ -14,11 +14,13 @@ If you have any issues or questions, feel free to create an issue in this repo.
   - DLP.All
 - The following outputs are supported:
   - Azure Analytics Workspace (OMS)
+  - Azure Storage Table
+  - Azure Storage Blob
   - PRTG Network Monitor
   - ( Azure ) SQL server
   - Graylog (or any other source that accepts a simple socket connection)
   - CSV Local file
-  - Power BI (indirectly through SQL or CSV)
+  - Power BI (indirectly through SQL, CSV, Azure Tables or Azure Blob)
 
 Simply download the executable you need from the Windows or Linux folder and copy a config file from the ConfigExamples folder that suits your need:
 - Windows:
@@ -44,12 +46,12 @@ See the following link for more info on the management APIs: https://msdn.micros
 
 ## Roadmap:
 
-- Add AzureBlob and AzureTable outputs
 - Automate onboarding as much as possible to make it easier to use
 - Make a container that runs this script
 - Create a tutorial for automatic onboarding + docker container for the easiest way to run this
 
 ## Latest changes:
+- Added Azure Blob and Azure Table outputs
 - Added SQL output for Power BI
 - Changed file to CSV output
 - Added PRTG output
@@ -134,6 +136,13 @@ If you are running this script to get audit events in an Azure Analytics Workspa
 - Create a workspace from "Create resource" in Azure (no configuration required);
 - Get the ID and key from "Agent management";
 - You do not need to prepare any tables or other settings.
+
+### (optional) Creating an Azure Table / Blob account:
+
+If you are running this script to get audit events in an Azure Table and/or Blob you will need a storage account and connection string:
+- Create a storage account from "Create resource" in Azure (no special configuration required);
+- Get the connection string from 'Access keys'
+- You do not need to prepare any tables or blob containers as they are created in the storage account if they do not exist.
 
 ### (optional) Creating a PRTG sensor
 
