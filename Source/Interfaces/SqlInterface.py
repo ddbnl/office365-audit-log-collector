@@ -11,7 +11,7 @@ import pandas
 
 class SqlInterface(_Interface.Interface):
 
-    def __init__(self, sql_connection_string, cache_size=500000, chunk_size=2000, **kwargs):
+    def __init__(self, sql_connection_string, **kwargs):
         """
         Interface to send logs to an SQL database. Caches logs in memory until the cache size is hit, then writes them
         to database. When the cache is too small too many SQL writes are made taking ages to complete. Too
@@ -19,12 +19,15 @@ class SqlInterface(_Interface.Interface):
         """
         super().__init__(**kwargs)
         self._connection_string = sql_connection_string
-        self.cache_size = cache_size
-        self.chunk_size = chunk_size
         self.results_cache = collections.defaultdict(collections.deque)
         self._existing_columns = {}
         self._threads = collections.deque()
         self._engine = None
+
+    @property
+    def enabled(self):
+
+        return self.collector.config['output', 'sql', 'enabled']
 
     @property
     def engine(self):
@@ -153,7 +156,8 @@ class SqlInterface(_Interface.Interface):
         df = df.loc[:, ~df.columns.duplicated()]  # Remove any duplicate columns
         df = self._deduplicate_columns(df=df)
         df.to_sql(name=table_name, con=engine, index=False, if_exists='replace',
-                  chunksize=int(self.chunk_size / len(df.columns)), method='multi')
+                  chunksize=int((self.collector.config['output', 'sql', 'chunkSize'] or 2000) / len(df.columns)),
+                  method='multi')
 
     def _send_message(self, msg, content_type, **kwargs):
         """
@@ -162,7 +166,7 @@ class SqlInterface(_Interface.Interface):
         :param content_type: str
         """
         self.results_cache[content_type].append(msg)
-        if self.total_cache_length >= self.cache_size:
+        if self.total_cache_length >= (self.collector.config['output', 'sql', 'cacheSize'] or 500000):
             self._wait_threads()
             self._threads.clear()
             self._process_caches()
@@ -206,8 +210,10 @@ class SqlInterface(_Interface.Interface):
                         len(df), content_type, table_name))
                     df = df.loc[:, ~df.columns.duplicated()]  # Remove any duplicate columns
                     df = self._deduplicate_columns(df=df)
-                    df.to_sql(name=table_name, con=engine, index=False, if_exists='append',
-                              chunksize=int(self.chunk_size / len(df.columns)), method='multi')
+                    df.to_sql(
+                        name=table_name, con=engine, index=False, if_exists='append',
+                        chunksize=int((self.collector.config['output', 'sql', 'chunkSize'] or 2000) / len(df.columns)),
+                        method='multi')
             except Exception as e:
                 self.unsuccessfully_sent += len(df)
                 raise e

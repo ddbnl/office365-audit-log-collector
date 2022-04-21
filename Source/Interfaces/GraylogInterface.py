@@ -1,7 +1,5 @@
 from . import _Interface
-from collections import deque
 import logging
-import threading
 import socket
 import json
 import time
@@ -9,11 +7,10 @@ import time
 
 class GraylogInterface(_Interface.Interface):
 
-    def __init__(self, graylog_address=None, graylog_port=None, **kwargs):
+    @property
+    def enabled(self):
 
-        super().__init__(**kwargs)
-        self.gl_address = graylog_address
-        self.gl_port = graylog_port
+        return self.collector.config['output', 'graylog', 'enabled']
 
     def _send_message(self, msg, retries=3, **kwargs):
         """
@@ -52,5 +49,6 @@ class GraylogInterface(_Interface.Interface):
         Return a socket connected to the Graylog input.
         """
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.connect((self.gl_address, int(self.gl_port)))
+        s.connect((self.collector.config['output', 'graylog', 'address'],
+                   int(self.collector.config['output', 'graylog', 'port'])))
         return s

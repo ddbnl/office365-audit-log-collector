@@ -1,22 +1,25 @@
 from . import _Interface
-import threading
 import collections
 from prtg.sensor.result import CustomSensorResult
 
 
 class PRTGInterface(_Interface.Interface):
 
-    def __init__(self, config=None, **kwargs):
+    def __init__(self, **kwargs):
         """
         Interface to send logs to an Azure Log Analytics Workspace.
         """
         super().__init__(**kwargs)
-        self.config = config
         self.results = collections.defaultdict(collections.deque)
+
+    @property
+    def enabled(self):
+
+        return self.collector.config['output', 'prtg', 'enabled']
 
     def _send_message(self, msg, content_type, **kwargs):
 
-        for channel in self.config['channels']:
+        for channel in self.collector.config['output', 'prtg', 'channels']:
             if content_type not in channel['filters']:
                 continue
             self._filter_result(msg=msg, content_type=content_type, channel=channel)
@@ -31,7 +34,7 @@ class PRTGInterface(_Interface.Interface):
     def output(self):
         try:
             csr = CustomSensorResult()
-            for channel in self.config['channels']:
+            for channel in self.collector.config['output', 'prtg', 'channels']:
                 if channel['name'] not in self.results:
                     self.results[channel['name']] = collections.deque()
             for channel_name, messages in self.results.items():
@@ -47,4 +50,3 @@ class PRTGInterface(_Interface.Interface):
 
         super().exit_callback()
         self.output()
-
