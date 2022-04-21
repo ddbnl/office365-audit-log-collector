@@ -12,10 +12,3 @@ filter:
     Operation: UserLoginFailed
   Audit.SharePoint:
     Operation: FileDeleted
-# Output only to file
-output:
-  file:
-    enabled: True
-    path: 'output'
-    separateByContentType: True
-    separator: ';'

@@ -7,6 +7,7 @@ import sys
 import yaml
 import time
 import json
+import signal
 import logging
 import datetime
 import argparse
@@ -28,11 +29,13 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         super().__init__(**kwargs)
         self.config = Config(path=config_path)
         self.interfaces = {}
-        self.register_interfaces(**kwargs)
+        self._register_interfaces(**kwargs)
+        self._init_logging()
 
         self._last_run_times = {}
         self._known_content = {}
         self._known_logs = {}
+        self._force_stop = False
 
         self._remaining_content_types = collections.deque()
         self.blobs_to_collect = collections.defaultdict(collections.deque)
@@ -43,7 +46,52 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         self.logs_retrieved = 0
         self.errors_retrieving = 0
 
-    def register_interfaces(self, **kwargs):
+    def force_stop(self, *args):
+
+        self._force_stop = True
+        logging.info("Got a SIGINT, stopping..")
+        self.monitor_thread.join(timeout=10)
+        sys.exit(0)
+
+    def run(self):
+        if not self.config['collect', 'schedule']:
+            self.run_once()
+        else:
+            self.run_scheduled()
+
+    def run_once(self):
+        """
+        Check available content and retrieve it, then exit.
+        """
+        self._prepare_to_run()
+        logging.log(level=logging.INFO, msg='Starting run @ {}. Content: {}.'.format(
+            datetime.datetime.now(), self._remaining_content_types))
+        self._start_monitoring()
+        self._get_all_available_content()
+        while self.monitor_thread.is_alive():
+            self.monitor_thread.join(1)
+        self._finish_run()
+
+    def run_scheduled(self):
+        """
+        Run according to the schedule set in the config file. Collector will not exit unless manually stopped.
+        """
+        if not self.run_started:  # Run immediately initially
+            target_time = datetime.datetime.now()
+        else:
+            days, hours, minutes = self.config['collect', 'schedule']
+            target_time = self.run_started + datetime.timedelta(days=days, hours=hours, minutes=minutes)
+        logging.info("Next run is scheduled for: {}.".format(target_time))
+        if datetime.datetime.now() > target_time:
+            logging.warning("Warning: last run took longer than the scheduled interval.")
+        while True:
+            if datetime.datetime.now() > target_time:
+                self.run_once()
+                self.run_scheduled()
+            else:
+                time.sleep(1)
+
+    def _register_interfaces(self, **kwargs):
 
         for interface in [FileInterface.FileInterface, AzureTableInterface.AzureTableInterface,
                           AzureBlobInterface.AzureBlobInterface, AzureOMSInterface.AzureOMSInterface,
@@ -51,11 +99,11 @@ class AuditLogCollector(ApiConnection.ApiConnection):
             self.interfaces[interface] = interface(collector=self, **kwargs)
 
     @property
-    def all_enabled_interfaces(self):
+    def _all_enabled_interfaces(self):
 
         return [interface for interface in self.interfaces.values() if interface.enabled]
 
-    def init_logging(self):
+    def _init_logging(self):
         """
         Start logging to file and console. If PRTG output is enabled do not log to console, as this will interfere with
         the sensor result.
@@ -72,8 +120,9 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         """
         Make sure that self.run_once can be called multiple times by resetting to an initial state.
         """
-        print(self.all_enabled_interfaces)
+        self.config.load_config()
         self._remaining_content_types = self.config['collect', 'contentTypes'] or collections.deque()
+        logging.info("Bewww: {}".format(self._remaining_content_types))
         if self.config['collect', 'autoSubscribe']:
             self._auto_subscribe()
         if self.config['collect', 'resume']:
@@ -84,21 +133,9 @@ class AuditLogCollector(ApiConnection.ApiConnection):
             self._clean_known_content()
             self._clean_known_logs()
         self.logs_retrieved = 0
-        for interface in self.all_enabled_interfaces:
+        for interface in self._all_enabled_interfaces:
             interface.reset()
         self.run_started = datetime.datetime.now()
-
-    def run_once(self, start_time=None):
-        """
-        Check available content and retrieve it, then exit.
-        """
-        self._prepare_to_run()
-        logging.log(level=logging.INFO, msg='Starting run @ {}. Content: {}.'.format(
-            datetime.datetime.now(), self._remaining_content_types))
-        self._start_monitoring()
-        self._get_all_available_content(start_time=start_time)
-        self.monitor_thread.join()
-        self._finish_run()
 
     def _finish_run(self):
         """
@@ -119,7 +156,7 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         """
         logging.info("Finished. Total logs retrieved: {}. Total logs with errors: {}. Run time: {}.".format(
             self.logs_retrieved, self.errors_retrieving, datetime.datetime.now() - self.run_started))
-        for interface in self.all_enabled_interfaces:
+        for interface in self._all_enabled_interfaces:
             logging.info("{} reports: {} successfully sent, {} errors".format(
                 interface.__class__.__name__, interface.successfully_sent, interface.unsuccessfully_sent))
 
@@ -141,7 +178,7 @@ class AuditLogCollector(ApiConnection.ApiConnection):
                     del self._last_run_times[content_type]
 
     @property
-    def done_retrieving_content(self):
+    def _done_retrieving_content(self):
         """
         Returns True if there are no more content blobs to be collected. Used to determine when to exit the script.
         :return: Bool
@@ -152,7 +189,7 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         return True
 
     @property
-    def done_collecting_available_content(self):
+    def _done_collecting_available_content(self):
         """
         Once a call is made to retrieve content for a particular type, and there is no 'NextPageUri' in the response,
         the type is removed from 'self.content_types' to signal that all available content has been retrieved for that
@@ -184,19 +221,16 @@ class AuditLogCollector(ApiConnection.ApiConnection):
             logging.info("Auto subscribing to: {}".format(content_type))
             subscriber.set_sub_status(content_type=content_type, action='start')
 
-    def _get_all_available_content(self, start_time=None):
+    def _get_all_available_content(self):
         """
         Start a thread to retrieve available content blobs for each content type to be collected.
-        :param start_time: DateTime
         """
         for content_type in self._remaining_content_types.copy():
-            if not start_time:
-                if self.config['resume'] and content_type in self._last_run_times.keys():
-                    start_time = self._last_run_times[content_type]
-                else:
-                    hours_to_collect = self.config['collect', 'hoursToCollect'] or 23
-                    start_time = \
-                        datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=hours_to_collect)
+            if self.config['resume'] and content_type in self._last_run_times.keys():
+                start_time = self._last_run_times[content_type]
+            else:
+                hours_to_collect = self.config['collect', 'hoursToCollect'] or 23
+                start_time = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=hours_to_collect)
             self.retrieve_available_content_threads.append(threading.Thread(
                 target=self._get_available_content, daemon=True,
                 kwargs={'content_type': content_type, 'start_time': start_time}))
@@ -214,11 +248,12 @@ class AuditLogCollector(ApiConnection.ApiConnection):
             formatted_start_time = str(start_time).replace(' ', 'T').rsplit('.', maxsplit=1)[0]
             logging.info("Retrieving {}. Start time: {}. End time: {}.".format(
                 content_type, formatted_start_time, formatted_end_time))
-            response = self.make_api_request(url='subscriptions/content?contentType={0}&startTime={1}&endTime={2}'.format(
-                content_type, formatted_start_time, formatted_end_time))
+            response = self.make_api_request(url='subscriptions/content?contentType={0}&startTime={1}&endTime={2}'.
+                                                 format(content_type, formatted_start_time, formatted_end_time))
             self.blobs_to_collect[content_type] += response.json()
             while 'NextPageUri' in response.headers.keys() and response.headers['NextPageUri']:
-                logging.log(level=logging.DEBUG, msg='Getting next page of content for type: "{0}"'.format(content_type))
+                logging.log(level=logging.DEBUG, msg='Getting next page of content for type: "{0}"'.
+                            format(content_type))
                 self.blobs_to_collect[content_type] += response.json()
                 response = self.make_api_request(url=response.headers['NextPageUri'], append_url=False)
             logging.log(level=logging.DEBUG, msg='Got {0} content blobs of type: "{1}"'.format(
@@ -233,13 +268,13 @@ class AuditLogCollector(ApiConnection.ApiConnection):
 
     def _start_interfaces(self):
 
-        for interface in self.all_enabled_interfaces:
+        for interface in self._all_enabled_interfaces:
             interface.start()
 
-    def _stop_interfaces(self):
+    def _stop_interfaces(self, force):
 
-        for interface in self.all_enabled_interfaces:
-            interface.stop()
+        for interface in self._all_enabled_interfaces:
+            interface.stop(gracefully=not force)
 
     def _monitor_blobs_to_collect(self):
         """
@@ -250,17 +285,16 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         threads = collections.deque()
         while True:
             threads = [thread for thread in threads if thread.is_alive()]
-            if self.done_collecting_available_content and self.done_retrieving_content and not threads:
+            if self._force_stop or \
+                    (self._done_collecting_available_content and self._done_retrieving_content and not threads):
                 break
-            if not self.blobs_to_collect:
-                continue
             for content_type, blobs_to_collect in self.blobs_to_collect.copy().items():
                 if len(threads) >= (self.config['collect', 'maxThreads'] or 50):
                     break
                 if self.blobs_to_collect[content_type]:
                     blob_json = self.blobs_to_collect[content_type].popleft()
                     self._collect_blob(blob_json=blob_json, content_type=content_type, threads=threads)
-        self._stop_interfaces()
+        self._stop_interfaces(force=self._force_stop)
 
     def _collect_blob(self, blob_json, content_type, threads):
         """
@@ -328,7 +362,7 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         :param content_type: Type of API being retrieved for, e.g. 'Audit.Exchange' (str)
         :param results: list of JSON
         """
-        for interface in self.all_enabled_interfaces:
+        for interface in self._all_enabled_interfaces:
             interface.send_messages(*results, content_type=content_type)
 
     def _check_filters(self, log, content_type):
@@ -515,6 +549,8 @@ class Config(object):
         :return: tuple of ints (days/hours/minutes)
         """
         schedule = self._find_setting('collect', 'schedule')
+        if not schedule:
+            return
         try:
             schedule = [int(x) for x in schedule.split(' ')]
             assert len(schedule) == 3
@@ -575,7 +611,8 @@ if __name__ == "__main__":
         tenant_id=argsdict['tenant_id'], secret_key=argsdict['secret_key'], client_key=argsdict['client_key'],
         publisher_id=argsdict['publisher_id'], sql_connection_string=argsdict['sql_string'],
         table_connection_string=argsdict['table_string'], blob_connection_string=argsdict['blob_string'])
-    collector.init_logging()
-    collector.run_once()
+
+    signal.signal(signal.SIGINT, collector.force_stop)
+    collector.run()
 
 

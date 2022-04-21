@@ -7,6 +7,6 @@ collect:
     DLP.All: True
 output:
   graylog:
-    enabled: False
+    enabled: True
     address: 172.16.1.1
     port: 5000
