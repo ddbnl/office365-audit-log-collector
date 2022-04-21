@@ -3,7 +3,7 @@
 Collect/retrieve Office365, Azure and DLP audit logs, optionally filter them, then send them to one or more outputs such as file, PRTG, Azure Log Analytics or Graylog.
 Onboarding is easy and takes only a few minutes (steps described below). There are Windows and Linux executables, and an optional GUI for Windows only.
 Easy configuration with a YAML config file (see the 'ConfigExamples' folder for reference).
-If you have any issues or questions, feel free to create an issue in this repo.
+If you have any issues or questions, or requests for additional interfaces, feel free to create an issue in this repo.
 - The following Audit logs can be extracted:
   - Audit.General
   - Audit.AzureActiveDirectory
@@ -44,12 +44,12 @@ See the following link for more info on the management APIs: https://msdn.micros
 
 ## Roadmap:
 
-- Add AzureBlob and AzureTable outputs
 - Automate onboarding as much as possible to make it easier to use
 - Make a container that runs this script
 - Create a tutorial for automatic onboarding + docker container for the easiest way to run this
 
 ## Latest changes:
+- Added Azure Blob and Azure Table outputs
 - Added SQL output for Power BI
 - Changed file to CSV output
 - Added PRTG output
