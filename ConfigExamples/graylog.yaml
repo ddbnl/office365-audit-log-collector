@@ -5,8 +5,6 @@ collect:
     Audit.Exchange: True
     Audit.SharePoint: True
     DLP.All: True
-  skipKnownLogs: True
-  resume: True
 output:
   graylog:
     enabled: False

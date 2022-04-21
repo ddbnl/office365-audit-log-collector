@@ -1,4 +1,5 @@
-from Interfaces import AzureOMSInterface, SqlInterface, GraylogInterface, PRTGInterface, FileInterface
+from Interfaces import AzureOMSInterface, SqlInterface, GraylogInterface, PRTGInterface, FileInterface, \
+    AzureTableInterface, AzureBlobInterface
 import AuditLogSubscriber
 import ApiConnection
 import os
@@ -17,8 +18,8 @@ class AuditLogCollector(ApiConnection.ApiConnection):
 
     def __init__(self, content_types=None, resume=True, fallback_time=None, skip_known_logs=True,
                  log_path='collector.log', debug=False, auto_subscribe=False, max_threads=20, retries=3,
-                 retry_cooldown=3, file_output=False, sql_output=False, graylog_output=False, azure_oms_output=False,
-                 prtg_output=False, **kwargs):
+                 retry_cooldown=3, file_output=False, sql_output=False, graylog_output=False, azure_table_output=False,
+                 azure_blob_output=False, azure_oms_output=False, prtg_output=False, **kwargs):
         """
         Object that can retrieve all available content blobs for a list of content types and then retrieve those
         blobs and output them to a file or Graylog input (i.e. send over a socket).
@@ -52,6 +53,10 @@ class AuditLogCollector(ApiConnection.ApiConnection):
 
         self.file_output = file_output
         self.file_interface = FileInterface.FileInterface(**kwargs)
+        self.azure_table_output = azure_table_output
+        self.azure_table_interface = AzureTableInterface.AzureTableInterface(**kwargs)
+        self.azure_blob_output = azure_blob_output
+        self.azure_blob_interface = AzureBlobInterface.AzureBlobInterface(**kwargs)
         self.azure_oms_output = azure_oms_output
         self.azure_oms_interface = AzureOMSInterface.AzureOMSInterface(**kwargs)
         self.sql_output = sql_output
@@ -76,7 +81,8 @@ class AuditLogCollector(ApiConnection.ApiConnection):
     @property
     def all_interfaces(self):
 
-        return {self.file_interface: self.file_output, self.azure_oms_interface: self.azure_oms_output,
+        return {self.file_interface: self.file_output, self.azure_table_interface: self.azure_table_output,
+                self.azure_blob_interface: self.azure_blob_output, self.azure_oms_interface: self.azure_oms_output,
                 self.sql_interface: self.sql_output, self.graylog_interface: self.graylog_output,
                 self.prtg_interface: self.prtg_output}
 
@@ -108,6 +114,8 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         """
         :param config: str
         """
+        az_logger = logging.getLogger("azure.core.pipeline.policies.http_logging_policy")
+        az_logger.setLevel(logging.WARNING)
         if 'log' in config['collect']:
             if 'path' in config['collect']['log']:
                 self.log_path = config['collect']['log']['path']
@@ -153,6 +161,8 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         if 'output' in config:
             self._load_file_output_config(config=config)
             self._load_azure_log_analytics_output_config(config=config)
+            self._load_azure_table_output_config(config=config)
+            self._load_azure_blob_output_config(config=config)
             self._load_sql_output_config(config=config)
             self._load_graylog_output_config(config=config)
             self._load_prtg_output_config(config=config)
@@ -170,6 +180,8 @@ class AuditLogCollector(ApiConnection.ApiConnection):
                 self.file_interface.separate_by_content_type = config['output']['file']['separateByContentType']
             if 'separator' in config['output']['file']:
                 self.file_interface.separator = config['output']['file']['separator']
+            if 'cacheSize' in config['output']['file']:
+                self.file_interface.cache_size = config['output']['file']['cacheSize']
 
     def _load_azure_log_analytics_output_config(self, config):
         """
@@ -194,6 +206,36 @@ class AuditLogCollector(ApiConnection.ApiConnection):
                 self.sql_interface.cache_size = config['output']['sql']['cacheSize']
             if 'chunkSize' in config['output']['sql']:
                 self.sql_interface.chunk_size = config['output']['sql']['chunkSize']
+
+    def _load_azure_table_output_config(self, config):
+        """
+        :param config: str
+        """
+        if 'azureTable' in config['output']:
+            if 'enabled' in config['output']['azureTable']:
+                self.azure_table_output = config['output']['azureTable']['enabled']
+            if 'tableName' in config['output']['azureTable']:
+                self.azure_table_interface.table_name = config['output']['azureTable']['tableName']
+
+    def _load_azure_blob_output_config(self, config):
+        """
+        :param config: str
+        """
+        if 'azureBlob' in config['output']:
+            if 'enabled' in config['output']['azureBlob']:
+                self.azure_blob_output = config['output']['azureBlob']['enabled']
+            if 'containerName' in config['output']['azureBlob']:
+                self.azure_blob_interface.container_name = config['output']['azureBlob']['containerName']
+            if 'blobName' in config['output']['azureBlob']:
+                self.azure_blob_interface.blob_name = config['output']['azureBlob']['blobName']
+            if 'tempPath' in config['output']['azureBlob']:
+                self.azure_blob_interface.output_path = config['output']['azureBlob']['tempPath']
+            if 'separateByContentType' in config['output']['azureBlob']:
+                self.azure_blob_interface.separate_by_content_type = config['output']['azureBlob']['separateByContentType']
+            if 'separator' in config['output']['azureBlob']:
+                self.azure_blob_interface.separator = config['output']['azureBlob']['separator']
+            if 'cacheSize' in config['output']['azureBlob']:
+                self.azure_blob_interface.cache_size = config['output']['azureBlob']['cacheSize']
 
     def _load_graylog_output_config(self, config):
         """
@@ -612,6 +654,10 @@ if __name__ == "__main__":
     parser.add_argument('secret_key', type=str, help='Secret key generated by Azure application', action='store')
     parser.add_argument('--config', metavar='config', type=str, help='Path to YAML config file',
                         action='store', dest='config')
+    parser.add_argument('--table-string', metavar='table_string', type=str,
+                        help='Connection string for Azure Table output interface', action='store', dest='table_string')
+    parser.add_argument('--blob-string', metavar='blob_string', type=str,
+                        help='Connection string for Azure Blob output interface', action='store', dest='blob_string')
     parser.add_argument('--sql-string', metavar='sql_string', type=str,
                         help='Connection string for SQL output interface', action='store', dest='sql_string')
     parser.add_argument('--interactive-subscriber', action='store_true',
@@ -686,7 +732,8 @@ if __name__ == "__main__":
         shared_key=argsdict['azure_key'],
         gl_address=argsdict['graylog_addr'], gl_port=argsdict['graylog_port'],
         graylog_output=argsdict['graylog'],
-        sql_connection_string=argsdict['sql_string'])
+        sql_connection_string=argsdict['sql_string'], table_connection_string=argsdict['table_string'],
+        blob_connection_string=argsdict['blob_string'])
     if argsdict['config']:
         collector.load_config(path=argsdict['config'])
     collector.init_logging()

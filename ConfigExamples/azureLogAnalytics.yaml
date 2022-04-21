@@ -5,8 +5,6 @@ collect:  # Settings determining which audit logs to collect and how to do it
     Audit.Exchange: True
     Audit.SharePoint: True
     DLP.All: True
-  skipKnownLogs: True
-  resume: True
 output:
   azureLogAnalytics:
     enabled: True
