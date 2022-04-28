@@ -1,5 +1,5 @@
 from Interfaces import AzureOMSInterface, SqlInterface, GraylogInterface, PRTGInterface, FileInterface, \
-    AzureTableInterface, AzureBlobInterface
+    AzureTableInterface, AzureBlobInterface, FluentdInterface
 import AuditLogSubscriber
 import ApiConnection
 import os
@@ -19,7 +19,7 @@ class AuditLogCollector(ApiConnection.ApiConnection):
     def __init__(self, content_types=None, resume=True, fallback_time=None, skip_known_logs=True,
                  log_path='collector.log', debug=False, auto_subscribe=False, max_threads=20, retries=3,
                  retry_cooldown=3, file_output=False, sql_output=False, graylog_output=False, azure_table_output=False,
-                 azure_blob_output=False, azure_oms_output=False, prtg_output=False, **kwargs):
+                 azure_blob_output=False, azure_oms_output=False, prtg_output=False, fluentd_output=False  **kwargs):
         """
         Object that can retrieve all available content blobs for a list of content types and then retrieve those
         blobs and output them to a file or Graylog input (i.e. send over a socket).
@@ -65,6 +65,8 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         self.graylog_interface = GraylogInterface.GraylogInterface(**kwargs)
         self.prtg_output = prtg_output
         self.prtg_interface = PRTGInterface.PRTGInterface(**kwargs)
+        self.fluentd_output = fluentd_output
+        self.fluentd_interface = FluentdInterface.FluentdInterface(**kwargs)
 
         self._last_run_times = {}
         self._known_content = {}
@@ -84,7 +86,7 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         return {self.file_interface: self.file_output, self.azure_table_interface: self.azure_table_output,
                 self.azure_blob_interface: self.azure_blob_output, self.azure_oms_interface: self.azure_oms_output,
                 self.sql_interface: self.sql_output, self.graylog_interface: self.graylog_output,
-                self.prtg_interface: self.prtg_output}
+                self.prtg_interface: self.prtg_output, self.fluentd_interface: self.fluentd_output}
 
     @property
     def all_enabled_interfaces(self):
@@ -165,6 +167,7 @@ class AuditLogCollector(ApiConnection.ApiConnection):
             self._load_azure_blob_output_config(config=config)
             self._load_sql_output_config(config=config)
             self._load_graylog_output_config(config=config)
+            self._load_fluentd_output_config(config=config)
             self._load_prtg_output_config(config=config)
 
     def _load_file_output_config(self, config):
@@ -248,6 +251,18 @@ class AuditLogCollector(ApiConnection.ApiConnection):
                 self.graylog_interface.gl_address = config['output']['graylog']['address']
             if 'port' in config['output']['graylog']:
                 self.graylog_interface.gl_port = config['output']['graylog']['port']
+    
+    def _load_fluentd_output_config(self, config):
+        """
+        :param config: str
+        """
+        if 'fluentd' in config['output']:
+            if 'enabled' in config['output']['fluentd']:
+                self.fluentd_output = config['output']['fluentd']['enabled']
+            if 'address' in config['output']['fluentd']:
+                self.fluentd_interface.fl_address = config['output']['fluentd']['address']
+            if 'port' in config['output']['fluentd']:
+                self.fluentd_interface.fl_port = config['output']['fluentd']['port']
 
     def _load_prtg_output_config(self, config):
         """
@@ -410,7 +425,7 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         current_time = datetime.datetime.now(datetime.timezone.utc)
         try:
             logging.log(level=logging.DEBUG, msg='Getting available content for type: "{}"'.format(content_type))
-            current_time = datetime.datetime.now(datetime.timezone.utc)
+            # current_time = datetime.datetime.now(datetime.timezone.utc)
             formatted_end_time = str(current_time).replace(' ', 'T').rsplit('.', maxsplit=1)[0]
             formatted_start_time = str(start_time).replace(' ', 'T').rsplit('.', maxsplit=1)[0]
             logging.info("Retrieving {}. Start time: {}. End time: {}.".format(
@@ -425,8 +440,9 @@ class AuditLogCollector(ApiConnection.ApiConnection):
             logging.log(level=logging.DEBUG, msg='Got {0} content blobs of type: "{1}"'.format(
                 len(self.blobs_to_collect[content_type]), content_type))
         except Exception as e:
-            logging.log(level=logging.DEBUG, msg="Error while getting available content: {}: {}".format(
+            logging.log(level=logging.WARN, msg="Error while getting available content: {}: {}".format(
                 content_type, e))
+            self._last_run_times[content_type] = start_time.strftime("%Y-%m-%dT%H:%M:%SZ")
             self.content_types.remove(content_type)
         else:
             self.content_types.remove(content_type)
@@ -645,8 +661,8 @@ if __name__ == "__main__":
 
     description = \
     """
-    Retrieve audit log contents from Office 365 API and save to file or Graylog.
-    Example: Retrieve all available content and send it to Graylog (using mock ID's and keys):
+    Retrieve audit log contents from Office 365 API and save to file or other output.
+    Example: Retrieve all available content and send it to an output (using mock ID's and keys):
     "AuditLogCollector.py 123 456 789 --general --exchange --azure_ad --sharepoint --dlp -g -gA 10.10.10.1 -gP 5000
     """
     parser = argparse.ArgumentParser(description=description)
@@ -698,6 +714,11 @@ if __name__ == "__main__":
                         dest='graylog_addr')
     parser.add_argument('-gP', metavar='graylog_port', type=str, help='Port of graylog server.', action='store',
                         dest='graylog_port')
+    parser.add_argument('-fd', help='Output to fluentd.', action='store_true', dest='fluentd')
+    parser.add_argument('-fdA', metavar='fluentd_address', type=str, help='Address of fluentd forward instance.', action='store',
+                        dest='fluentd_addr')
+    parser.add_argument('-fdP', metavar='fluentd_port', type=str, help='Port of fluentd instance.', action='store',
+                        dest='fluentd_port')
     args = parser.parse_args()
     argsdict = vars(args)
 
@@ -733,6 +754,8 @@ if __name__ == "__main__":
         shared_key=argsdict['azure_key'],
         gl_address=argsdict['graylog_addr'], gl_port=argsdict['graylog_port'],
         graylog_output=argsdict['graylog'],
+        fl_address=argsdict['fluentd_addr'], fl_port=argsdict['fluentd_port'],
+        fluentd_output=argsdict['fluentd'],
         sql_connection_string=argsdict['sql_string'], table_connection_string=argsdict['table_string'],
         blob_connection_string=argsdict['blob_string'])
     if argsdict['config']:
