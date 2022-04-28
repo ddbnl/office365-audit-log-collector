@@ -429,7 +429,7 @@ class AuditLogCollector(ApiConnection.ApiConnection):
             self.content_types.remove(content_type)
         else:
             self.content_types.remove(content_type)
-            self._last_run_times[content_type] = start_time.strftime("%Y-%m-%dT%H:%M:%SZ")
+            self._last_run_times[content_type] = current_time.strftime("%Y-%m-%dT%H:%M:%SZ")
 
     def _start_interfaces(self):
 
