@@ -407,6 +407,7 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         Retrieve available content blobs for a content type. If the response contains a
         'NextPageUri' there is more content to be retrieved; rerun until all has been retrieved.
         """
+        current_time = datetime.datetime.now(datetime.timezone.utc)
         try:
             logging.log(level=logging.DEBUG, msg='Getting available content for type: "{}"'.format(content_type))
             current_time = datetime.datetime.now(datetime.timezone.utc)
