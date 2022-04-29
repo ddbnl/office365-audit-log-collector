@@ -14,20 +14,23 @@ import datetime
 
 class AzureOMSInterface(_Interface.Interface):
 
-    def __init__(self, workspace_id=None, shared_key=None, max_threads=50, **kwargs):
+    def __init__(self, **kwargs):
         """
         Interface to send logs to an Azure Log Analytics Workspace.
         :param workspace_id: Found under "Agent Configuration" blade (str)
         :param shared_key: Found under "Agent Configuration" blade (str)
         """
         super().__init__(**kwargs)
-        self.workspace_id = workspace_id
-        self.shared_key = shared_key
-        self.max_threads = max_threads
         self.threads = collections.deque()
         self.session = requests.Session()
-        adapter = requests.adapters.HTTPAdapter(pool_connections=self.max_threads, pool_maxsize=self.max_threads)
+        max_threads = self.collector.config['output', 'azureLogAnalytics', 'maxThreads'] or 50
+        adapter = requests.adapters.HTTPAdapter(pool_connections=max_threads, pool_maxsize=max_threads)
         self.session.mount('https://', adapter)
+
+    @property
+    def enabled(self):
+
+        return self.collector.config['output', 'azureLogAnalytics', 'enabled']
 
     def monitor_queue(self):
         """
@@ -35,7 +38,8 @@ class AzureOMSInterface(_Interface.Interface):
         """
         while 1:
             self.threads = [running_thread for running_thread in self.threads if running_thread.is_alive()]
-            if self.queue and len(self.threads) < self.max_threads:
+            if self.queue and len(self.threads) < (self.collector.config['output', 'azureLogAnalytics', 'maxThreads']
+                                                   or 50):
                 msg, content_type = self.queue.popleft()
                 if msg == 'stop monitor thread':
                     [running_thread.join() for running_thread in self.threads]
@@ -80,10 +84,11 @@ class AzureOMSInterface(_Interface.Interface):
         x_headers = 'x-ms-date:' + date
         string_to_hash = method + "\n" + str(content_length) + "\n" + content_type + "\n" + x_headers + "\n" + resource
         bytes_to_hash = bytes(string_to_hash, 'UTF-8')
-        decoded_key = base64.b64decode(self.shared_key)
+        decoded_key = base64.b64decode(self.collector.config['output', 'azureLogAnalytics', 'sharedKey'])
         encoded_hash = base64.b64encode(hmac.new(decoded_key, bytes_to_hash, digestmod=hashlib.sha256).digest()).decode(
             'utf-8')
-        authorization = "SharedKey {}:{}".format(self.workspace_id, encoded_hash)
+        authorization = "SharedKey {}:{}".format(self.collector.config['output', 'azureLogAnalytics', 'workspaceId'],
+                                                 encoded_hash)
         return authorization
 
     def _post_data(self, body, log_type, time_generated):
@@ -100,7 +105,8 @@ class AzureOMSInterface(_Interface.Interface):
         content_length = len(body)
         signature = self._build_signature(rfc1123date, content_length, method, content_type, resource)
 
-        uri = 'https://' + self.workspace_id + '.ods.opinsights.azure.com' + resource + '?api-version=2016-04-01'
+        uri = 'https://' + self.collector.config['output', 'azureLogAnalytics', 'workspaceId'] + \
+              '.ods.opinsights.azure.com' + resource + '?api-version=2016-04-01'
 
         headers = {
             'content-type': content_type,

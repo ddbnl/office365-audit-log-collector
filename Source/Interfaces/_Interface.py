@@ -4,12 +4,27 @@ import threading
 
 class Interface(object):
 
-    def __init__(self, **kwargs):
+    def __init__(self, collector, **kwargs):
 
+        self.collector = collector
         self.monitor_thread = None
         self.queue = deque()
         self.successfully_sent = 0
         self.unsuccessfully_sent = 0
+
+    @property
+    def enabled(self):
+        """
+        Overload for each interface to point to the right setting in the config file.
+        :return: Bool
+        """
+        return self.collector.config['output', 'interface', 'enabled']
+
+    def reset(self):
+
+        self.successfully_sent = 0
+        self.unsuccessfully_sent = 0
+        self.queue.clear()
 
     def start(self):
         """

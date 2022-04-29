@@ -2,13 +2,14 @@ log:  # Log settings. Debug will severely decrease performance
   path: 'collector.log'
   debug: False
 collect:  # Settings determining which audit logs to collect and how to do it
+  schedule: 0 1 0  # How often to run in days/hours/minutes. Delete this line to just run once and exit.
   contentTypes:
     Audit.General: True
     Audit.AzureActiveDirectory: True
     Audit.Exchange: True
     Audit.SharePoint: True
     DLP.All: True
-  maxThreads: 50
+  maxThreads: 50  # Maximum number of simultaneous threads retrieving logs
   retries: 3  # Times to retry retrieving a content blob if it fails
   retryCooldown: 3  # Seconds to wait before retrying retrieving a content blob
   autoSubscribe: True  # Automatically subscribe to collected content types. Never unsubscribes from anything.
@@ -24,17 +25,19 @@ filter:  # Only logs that match ALL filters for a content type are collected. Le
 output:
   file:  # CSV output
     enabled: False
-    separateByContentType: True  # Creates a separate CSV file for each content type, appends content name to path
-    path: 'output'
+    separateByContentType: True  # Creates a separate CSV file for each content type, using file name from 'path' as a prefix
+    path: 'output.csv'
     separator: ';'
     cacheSize: 500000  # Amount of logs to cache until each CSV commit, larger=faster but eats more memory
   azureLogAnalytics:
     enabled: False
     workspaceId:
     sharedKey:
+    maxThreads: 50  # Maximum simultaneous threads sending logs to workspace
   azureTable:  # Provide connection string to executable at runtime with --table-string
     enabled: False
     tableName: AuditLogs  # Name of the table inside the storage account
+    maxThreads: 10  # Maximum simultaneous threads sending logs to Table
   azureBlob:  # Write CSV to a blob container. Provide connection string to executable at runtime with --blob-string
     enabled: False
     containerName: AuditLogs  # Name of the container inside storage account

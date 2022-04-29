@@ -8,24 +8,29 @@ from azure.data.tables import TableServiceClient
 
 class AzureTableInterface(_Interface.Interface):
 
-    def __init__(self, table_connection_string=None, table_name=None, max_threads=10, **kwargs):
+    def __init__(self, table_connection_string=None, **kwargs):
         """
         Interface to send logs to CSV file(s). Not every audit log has every possible column, so columns in the CSV
         file might change over time. Therefore, the CSV file is recreated each time the cache_size is hit to insure
         integrity, taking the performance hit.
         """
         super().__init__(**kwargs)
-        self.table_name = table_name
         self.connection_string = table_connection_string
         self._table_service = None
         self._table_client = None
-        self._max_threads = max_threads
         self._threads = collections.deque()
+
+    @property
+    def enabled(self):
+
+        return self.collector.config['output', 'azureTable', 'enabled']
 
     @property
     def table_service(self):
 
         if not self._table_service:
+            if not self.connection_string:
+                raise RuntimeError("Azure table output needs a connection string. Use --table-string to pass one.")
             self._table_service = TableServiceClient.from_connection_string(conn_str=self.connection_string)
         return self._table_service
 
@@ -33,10 +38,12 @@ class AzureTableInterface(_Interface.Interface):
     def table_client(self):
 
         if not self._table_client:
-            self._table_client = self.table_service.create_table_if_not_exists(table_name=self.table_name)
+            self._table_client = self.table_service.create_table_if_not_exists(
+                table_name=self.collector.config['output', 'azureTable', 'tableName'] or 'AuditLogs')
         return self._table_client
 
-    def _validate_fields(self, msg):
+    @staticmethod
+    def _validate_fields(msg):
 
         for k, v in msg.copy().items():
             if (isinstance(v, int) and v > 2147483647) or isinstance(v, list) or isinstance(v, dict):
@@ -49,7 +56,7 @@ class AzureTableInterface(_Interface.Interface):
         """
         while 1:
             self._threads = [running_thread for running_thread in self._threads if running_thread.is_alive()]
-            if self.queue and len(self._threads) < self._max_threads:
+            if self.queue and len(self._threads) < (self.collector.config['output', 'azureTable', 'maxThreads'] or 10):
                 msg, content_type = self.queue.popleft()
                 if msg == 'stop monitor thread':
                     [running_thread.join() for running_thread in self._threads]
@@ -81,4 +88,3 @@ class AzureTableInterface(_Interface.Interface):
     def exit_callback(self):
 
         return [thread.join() for thread in self._threads]
-

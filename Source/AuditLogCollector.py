@@ -7,69 +7,37 @@ import sys
 import yaml
 import time
 import json
+import signal
 import logging
 import datetime
 import argparse
 import collections
 import threading
 
+# Azure logger is very noisy on INFO
+az_logger = logging.getLogger("azure.core.pipeline.policies.http_logging_policy")
+az_logger.setLevel(logging.WARNING)
+
 
 class AuditLogCollector(ApiConnection.ApiConnection):
 
-    def __init__(self, content_types=None, resume=True, fallback_time=None, skip_known_logs=True,
-                 log_path='collector.log', debug=False, auto_subscribe=False, max_threads=20, retries=3,
-                 retry_cooldown=3, file_output=False, sql_output=False, graylog_output=False, azure_table_output=False,
-                 azure_blob_output=False, azure_oms_output=False, prtg_output=False, **kwargs):
+    def __init__(self, config_path, **kwargs):
         """
-        Object that can retrieve all available content blobs for a list of content types and then retrieve those
-        blobs and output them to a file or Graylog input (i.e. send over a socket).
-        :param content_types: list of content types to retrieve (e.g. 'Audit.Exchange', 'Audit.Sharepoint')
-        :param resume: Resume from last known run time for each content type (Bool)
-        :param fallback_time: if no last run times are found to resume from, run from this start time (Datetime)
-        :param retries: Times to retry retrieving a content blob if it fails (int)
-        :param retry_cooldown: Seconds to wait before retrying retrieving a content blob (int)
-        :param skip_known_logs: record retrieved content blobs and log ids, skip them next time (Bool)
-        :param file_output: path of file to output audit logs to (str)
-        :param log_path: path of file to log to (str)
-        :param debug: enable debug logging (Bool)
-        :param auto_subscribe: automatically subscribe to audit log feeds for which content is retrieved (Bool)
-        :param graylog_output: Enable graylog Interface (Bool)
-        :param azure_oms_output: Enable Azure workspace analytics OMS Interface (Bool)
-        :param prtg_output: Enable PRTG output (Bool)
-                """
+        Object that can retrieve all available content blobs for a list of content types and then retrieve those logs
+        and send them to a variety of outputs.
+        """
         super().__init__(**kwargs)
-        self.content_types = content_types or collections.deque()
-        self.resume = resume
-        self._fallback_time = fallback_time or datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(
-            hours=23)
-        self.retries = retries
-        self.retry_cooldown = retry_cooldown
-        self.max_threads = max_threads
-        self.skip_known_logs = skip_known_logs
-        self.log_path = log_path
-        self.debug = debug
-        self.auto_subscribe = auto_subscribe
-        self.filters = {}
-
-        self.file_output = file_output
-        self.file_interface = FileInterface.FileInterface(**kwargs)
-        self.azure_table_output = azure_table_output
-        self.azure_table_interface = AzureTableInterface.AzureTableInterface(**kwargs)
-        self.azure_blob_output = azure_blob_output
-        self.azure_blob_interface = AzureBlobInterface.AzureBlobInterface(**kwargs)
-        self.azure_oms_output = azure_oms_output
-        self.azure_oms_interface = AzureOMSInterface.AzureOMSInterface(**kwargs)
-        self.sql_output = sql_output
-        self.sql_interface = SqlInterface.SqlInterface(**kwargs)
-        self.graylog_output = graylog_output
-        self.graylog_interface = GraylogInterface.GraylogInterface(**kwargs)
-        self.prtg_output = prtg_output
-        self.prtg_interface = PRTGInterface.PRTGInterface(**kwargs)
+        self.config = Config(path=config_path)
+        self.interfaces = {}
+        self._register_interfaces(**kwargs)
+        self._init_logging()
 
         self._last_run_times = {}
         self._known_content = {}
         self._known_logs = {}
+        self._force_stop = False
 
+        self._remaining_content_types = collections.deque()
         self.blobs_to_collect = collections.defaultdict(collections.deque)
         self.monitor_thread = threading.Thread()
         self.retrieve_available_content_threads = collections.deque()
@@ -78,239 +46,105 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         self.logs_retrieved = 0
         self.errors_retrieving = 0
 
+    def force_stop(self, *args):
+
+        self._force_stop = True
+        logging.info("Got a SIGINT, stopping..")
+        self.monitor_thread.join(timeout=10)
+        sys.exit(0)
+
+    def run(self):
+        if not self.config['collect', 'schedule']:
+            self.run_once()
+        else:
+            self.run_scheduled()
+
+    def run_once(self):
+        """
+        Check available content and retrieve it, then exit.
+        """
+        self._prepare_to_run()
+        logging.log(level=logging.INFO, msg='Starting run @ {}. Content: {}.'.format(
+            datetime.datetime.now(), self._remaining_content_types))
+        self._start_monitoring()
+        self._get_all_available_content()
+        while self.monitor_thread.is_alive():
+            self.monitor_thread.join(1)
+        self._finish_run()
+
+    def run_scheduled(self):
+        """
+        Run according to the schedule set in the config file. Collector will not exit unless manually stopped.
+        """
+        if not self.run_started:  # Run immediately initially
+            target_time = datetime.datetime.now()
+        else:
+            days, hours, minutes = self.config['collect', 'schedule']
+            target_time = self.run_started + datetime.timedelta(days=days, hours=hours, minutes=minutes)
+            if datetime.datetime.now() > target_time:
+                logging.warning("Warning: last run took longer than the scheduled interval.")
+        logging.info("Next run is scheduled for: {}.".format(target_time))
+        while True:
+            if datetime.datetime.now() > target_time:
+                self.run_once()
+                self.run_scheduled()
+            else:
+                time.sleep(1)
+
+    def _register_interfaces(self, **kwargs):
+
+        for interface in [FileInterface.FileInterface, AzureTableInterface.AzureTableInterface,
+                          AzureBlobInterface.AzureBlobInterface, AzureOMSInterface.AzureOMSInterface,
+                          SqlInterface.SqlInterface, GraylogInterface.GraylogInterface, PRTGInterface.PRTGInterface]:
+            self.interfaces[interface] = interface(collector=self, **kwargs)
+
     @property
-    def all_interfaces(self):
+    def _all_enabled_interfaces(self):
 
-        return {self.file_interface: self.file_output, self.azure_table_interface: self.azure_table_output,
-                self.azure_blob_interface: self.azure_blob_output, self.azure_oms_interface: self.azure_oms_output,
-                self.sql_interface: self.sql_output, self.graylog_interface: self.graylog_output,
-                self.prtg_interface: self.prtg_output}
+        return [interface for interface in self.interfaces.values() if interface.enabled]
 
-    @property
-    def all_enabled_interfaces(self):
-
-        return [interface for interface, enabled in self.all_interfaces.items() if enabled]
-
-    @property
-    def all_content_types(self):
-        """
-        :return: list of str
-        """
-        return ['Audit.General', 'Audit.AzureActiveDirectory', 'Audit.Exchange', 'Audit.SharePoint', 'DLP.All']
-
-    def load_config(self, path):
-        """
-        Load a YML config containing settings for this collector and its' interfaces.
-        :param path: str
-        """
-        with open(path, 'r') as ofile:
-            config = yaml.safe_load(ofile)
-        self._load_log_config(config=config)
-        self._load_collect_config(config=config)
-        self._load_filter_config(config=config)
-        self._load_output_config(config=config)
-
-    def _load_log_config(self, config):
-        """
-        :param config: str
-        """
-        az_logger = logging.getLogger("azure.core.pipeline.policies.http_logging_policy")
-        az_logger.setLevel(logging.WARNING)
-        if 'log' in config['collect']:
-            if 'path' in config['collect']['log']:
-                self.log_path = config['collect']['log']['path']
-            if 'debug' in config['collect']['log']:
-                self.debug = config['collect']['log']['path']
-
-    def _load_collect_config(self, config):
-        """
-        :param config: str
-        """
-        if 'collect' in config:
-            if 'contentTypes' in config['collect']:
-                self.content_types = [
-                    x for x in self.all_content_types if x in config['collect']['contentTypes'] and
-                    config['collect']['contentTypes'][x] is True]
-            if 'maxThreads' in config['collect']:
-                self.max_threads = config['collect']['maxThreads']
-            if 'retries' in config['collect']:
-                self.retries = config['collect']['retries']
-            if 'retryCooldown' in config['collect']:
-                self.retry_cooldown = config['collect']['retryCooldown']
-            if 'autoSubscribe' in config['collect']:
-                self.auto_subscribe = config['collect']['autoSubscribe']
-            if 'skipKnownLogs' in config['collect']:
-                self.skip_known_logs = config['collect']['skipKnownLogs']
-            if 'resume' in config['collect']:
-                self.resume = config['collect']['resume']
-            if 'hoursToCollect' in config['collect']:
-                self._fallback_time = datetime.datetime.now(datetime.timezone.utc) -\
-                    datetime.timedelta(hours=config['collect']['hoursToCollect'])
-
-    def _load_filter_config(self, config):
-        """
-        :param config: str
-        """
-        if 'filter' in config and config['filter']:
-            self.filters = config['filter']
-
-    def _load_output_config(self, config):
-        """
-        :param config: str
-        """
-        if 'output' in config:
-            self._load_file_output_config(config=config)
-            self._load_azure_log_analytics_output_config(config=config)
-            self._load_azure_table_output_config(config=config)
-            self._load_azure_blob_output_config(config=config)
-            self._load_sql_output_config(config=config)
-            self._load_graylog_output_config(config=config)
-            self._load_prtg_output_config(config=config)
-
-    def _load_file_output_config(self, config):
-        """
-        :param config: str
-        """
-        if 'file' in config['output']:
-            if 'enabled' in config['output']['file']:
-                self.file_output = config['output']['file']['enabled']
-            if 'path' in config['output']['file']:
-                self.file_interface.output_path = config['output']['file']['path']
-            if 'separateByContentType' in config['output']['file']:
-                self.file_interface.separate_by_content_type = config['output']['file']['separateByContentType']
-            if 'separator' in config['output']['file']:
-                self.file_interface.separator = config['output']['file']['separator']
-            if 'cacheSize' in config['output']['file']:
-                self.file_interface.cache_size = config['output']['file']['cacheSize']
-
-    def _load_azure_log_analytics_output_config(self, config):
-        """
-        :param config: str
-        """
-        if 'azureLogAnalytics' in config['output']:
-            if 'enabled' in config['output']['azureLogAnalytics']:
-                self.azure_oms_output = config['output']['azureLogAnalytics']['enabled']
-            if 'workspaceId' in config['output']['azureLogAnalytics']:
-                self.azure_oms_interface.workspace_id = config['output']['azureLogAnalytics']['workspaceId']
-            if 'sharedKey' in config['output']['azureLogAnalytics']:
-                self.azure_oms_interface.shared_key = config['output']['azureLogAnalytics']['sharedKey']
-
-    def _load_sql_output_config(self, config):
-        """
-        :param config: str
-        """
-        if 'sql' in config['output']:
-            if 'enabled' in config['output']['sql']:
-                self.sql_output = config['output']['sql']['enabled']
-            if 'cacheSize' in config['output']['sql']:
-                self.sql_interface.cache_size = config['output']['sql']['cacheSize']
-            if 'chunkSize' in config['output']['sql']:
-                self.sql_interface.chunk_size = config['output']['sql']['chunkSize']
-
-    def _load_azure_table_output_config(self, config):
-        """
-        :param config: str
-        """
-        if 'azureTable' in config['output']:
-            if 'enabled' in config['output']['azureTable']:
-                self.azure_table_output = config['output']['azureTable']['enabled']
-            if 'tableName' in config['output']['azureTable']:
-                self.azure_table_interface.table_name = config['output']['azureTable']['tableName']
-
-    def _load_azure_blob_output_config(self, config):
-        """
-        :param config: str
-        """
-        if 'azureBlob' in config['output']:
-            if 'enabled' in config['output']['azureBlob']:
-                self.azure_blob_output = config['output']['azureBlob']['enabled']
-            if 'containerName' in config['output']['azureBlob']:
-                self.azure_blob_interface.container_name = config['output']['azureBlob']['containerName']
-            if 'blobName' in config['output']['azureBlob']:
-                self.azure_blob_interface.blob_name = config['output']['azureBlob']['blobName']
-            if 'tempPath' in config['output']['azureBlob']:
-                self.azure_blob_interface.output_path = config['output']['azureBlob']['tempPath']
-            if 'separateByContentType' in config['output']['azureBlob']:
-                self.azure_blob_interface.separate_by_content_type = config['output']['azureBlob']['separateByContentType']
-            if 'separator' in config['output']['azureBlob']:
-                self.azure_blob_interface.separator = config['output']['azureBlob']['separator']
-            if 'cacheSize' in config['output']['azureBlob']:
-                self.azure_blob_interface.cache_size = config['output']['azureBlob']['cacheSize']
-
-    def _load_graylog_output_config(self, config):
-        """
-        :param config: str
-        """
-        if 'graylog' in config['output']:
-            if 'enabled' in config['output']['graylog']:
-                self.graylog_output = config['output']['graylog']['enabled']
-            if 'address' in config['output']['graylog']:
-                self.graylog_interface.gl_address = config['output']['graylog']['address']
-            if 'port' in config['output']['graylog']:
-                self.graylog_interface.gl_port = config['output']['graylog']['port']
-
-    def _load_prtg_output_config(self, config):
-        """
-        :param config: str
-        """
-        if 'prtg' in config['output']:
-            if 'enabled' in config['output']['prtg']:
-                self.prtg_output = config['output']['prtg']['enabled']
-            self.prtg_interface.config = config['output']['prtg']
-
-    def init_logging(self):
+    def _init_logging(self):
         """
         Start logging to file and console. If PRTG output is enabled do not log to console, as this will interfere with
         the sensor result.
         """
         logger = logging.getLogger()
-        file_handler = logging.FileHandler(self.log_path, mode='w')
-        if not self.prtg_output:
+        file_handler = logging.FileHandler(self.config['log', 'path'].strip("'") or 'collector.log', mode='w')
+        if not self.interfaces[PRTGInterface.PRTGInterface].enabled:
             stream_handler = logging.StreamHandler(sys.stdout)
             logger.addHandler(stream_handler)
         logger.addHandler(file_handler)
-        logger.setLevel(logging.INFO if not self.debug else logging.DEBUG)
+        logger.setLevel(logging.INFO if not self.config['log', 'debug'] else logging.DEBUG)
 
     def _prepare_to_run(self):
         """
         Make sure that self.run_once can be called multiple times by resetting to an initial state.
         """
-        if self.auto_subscribe:
+        self.config.load_config()
+        self._remaining_content_types = self.config['collect', 'contentTypes'] or collections.deque()
+        if self.config['collect', 'autoSubscribe']:
             self._auto_subscribe()
-        if self.resume:
+        if self.config['collect', 'resume']:
             self._get_last_run_times()
-        if self.skip_known_logs:
+        if self.config['collect', 'skipKnownLogs']:
             self._known_content.clear()
             self._known_logs.clear()
             self._clean_known_content()
             self._clean_known_logs()
         self.logs_retrieved = 0
-        for interface in self.all_enabled_interfaces:
-            interface.successfully_sent = 0
-            interface.unsuccessfully_sent = 0
+        for interface in self._all_enabled_interfaces:
+            interface.reset()
         self.run_started = datetime.datetime.now()
-
-    def run_once(self, start_time=None):
-        """
-        Check available content and retrieve it, then exit.
-        """
-        logging.log(level=logging.INFO, msg='Starting run @ {}. Content: {}.'.format(
-            datetime.datetime.now(), self.content_types))
-        self._prepare_to_run()
-        self._start_monitoring()
-        self._get_all_available_content(start_time=start_time)
-        self.monitor_thread.join()
-        self._finish_run()
 
     def _finish_run(self):
         """
         Save relevant information and output PRTG result if the interface is enabled. The other interfaces output
         while collecting.
         """
-        if self.skip_known_logs:
+        if self.config['collect', 'skipKnownLogs']:
             self._add_known_log()
             self._add_known_content()
-        if self.resume and self._last_run_times:
+        if self.config['collect', 'resume'] and self._last_run_times:
             with open('last_run_times', 'w') as ofile:
                 json.dump(fp=ofile, obj=self._last_run_times)
         self._log_statistics()
@@ -321,7 +155,7 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         """
         logging.info("Finished. Total logs retrieved: {}. Total logs with errors: {}. Run time: {}.".format(
             self.logs_retrieved, self.errors_retrieving, datetime.datetime.now() - self.run_started))
-        for interface in self.all_enabled_interfaces:
+        for interface in self._all_enabled_interfaces:
             logging.info("{} reports: {} successfully sent, {} errors".format(
                 interface.__class__.__name__, interface.successfully_sent, interface.unsuccessfully_sent))
 
@@ -337,13 +171,13 @@ class AuditLogCollector(ApiConnection.ApiConnection):
                 logging.error("Could not read last run times file: {}.".format(e))
             for content_type, last_run_time in self._last_run_times.items():
                 try:
-                    self._last_run_times[content_type] = datetime.datetime.strptime(last_run_time, "%Y-%m-%dT%H:%M:%SZ")
+                    self._last_run_times[content_type] = datetime.datetime.strptime(last_run_time, "%Y-%m-%dT%H:%M:%S%z")
                 except Exception as e:
                     logging.error("Could not read last run time for content type {}: {}.".format(content_type, e))
                     del self._last_run_times[content_type]
 
     @property
-    def done_retrieving_content(self):
+    def _done_retrieving_content(self):
         """
         Returns True if there are no more content blobs to be collected. Used to determine when to exit the script.
         :return: Bool
@@ -354,13 +188,13 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         return True
 
     @property
-    def done_collecting_available_content(self):
+    def _done_collecting_available_content(self):
         """
         Once a call is made to retrieve content for a particular type, and there is no 'NextPageUri' in the response,
         the type is removed from 'self.content_types' to signal that all available content has been retrieved for that
         type.
         """
-        return not bool(self.content_types)
+        return not bool(self._remaining_content_types)
 
     def _start_monitoring(self):
         """
@@ -378,47 +212,70 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         status = subscriber.get_sub_status()
         if status == '':
             raise RuntimeError("Auto subscribe enabled but could not get subscription status")
-        unsubscribed_content_types = self.content_types.copy()
+        unsubscribed_content_types = self._remaining_content_types.copy()
         for s in status:
-            if s['contentType'] in self.content_types and s['status'].lower() == 'enabled':
+            if isinstance(s, str):  # For issue #18
+                raise RuntimeError("Auto subscribe enabled but could not get subscription status")
+            if s['contentType'] in self._remaining_content_types and s['status'].lower() == 'enabled':
                 unsubscribed_content_types.remove(s['contentType'])
         for content_type in unsubscribed_content_types:
             logging.info("Auto subscribing to: {}".format(content_type))
             subscriber.set_sub_status(content_type=content_type, action='start')
 
-    def _get_all_available_content(self, start_time=None):
+    def _get_all_available_content(self):
         """
         Start a thread to retrieve available content blobs for each content type to be collected.
-        :param start_time: DateTime
         """
-        for content_type in self.content_types.copy():
-            if not start_time:
-                if self.resume and content_type in self._last_run_times.keys():
-                    start_time = self._last_run_times[content_type]
-                else:
-                    start_time = self._fallback_time
-            self.retrieve_available_content_threads.append(threading.Thread(
-                target=self._get_available_content, daemon=True,
-                kwargs={'content_type': content_type, 'start_time': start_time}))
-            self.retrieve_available_content_threads[-1].start()
+        end_time = datetime.datetime.now(datetime.timezone.utc)
+        for content_type in self._remaining_content_types.copy():
+            if self.config['collect', 'resume'] and content_type in self._last_run_times.keys():
+                start_time = self._last_run_times[content_type]
+                logging.info("{} - resuming from: {}".format(content_type, start_time))
+            else:
+                hours_to_collect = self.config['collect', 'hoursToCollect'] or 24
+                start_time = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=hours_to_collect)
 
-    def _get_available_content(self, content_type, start_time):
+            if end_time - start_time > datetime.timedelta(hours=168):
+                logging.warning("Hours to collect cannot be more than 168 due to Office API limits, defaulting to 168")
+                end_time = start_time + datetime.timedelta(hours=168)
+            while True:
+                if end_time - start_time > datetime.timedelta(hours=24):
+                    split_start_time = start_time
+                    split_end_time = start_time + datetime.timedelta(hours=24)
+                    self._start_get_available_content_thread(
+                        content_type=content_type, start_time=split_start_time, end_time=split_end_time)
+                    start_time = split_end_time
+                    self._remaining_content_types.append(content_type)
+                else:
+                    self._start_get_available_content_thread(
+                        content_type=content_type, start_time=start_time, end_time=end_time)
+                    break
+            self._last_run_times[content_type] = end_time.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    def _start_get_available_content_thread(self, content_type, start_time, end_time):
+
+        self.retrieve_available_content_threads.append(threading.Thread(
+            target=self._get_available_content, daemon=True,
+            kwargs={'content_type': content_type, 'start_time': start_time, 'end_time': end_time}))
+        self.retrieve_available_content_threads[-1].start()
+
+    def _get_available_content(self, content_type, start_time, end_time):
         """
         Retrieve available content blobs for a content type. If the response contains a
         'NextPageUri' there is more content to be retrieved; rerun until all has been retrieved.
         """
         try:
             logging.log(level=logging.DEBUG, msg='Getting available content for type: "{}"'.format(content_type))
-            current_time = datetime.datetime.now(datetime.timezone.utc)
-            formatted_end_time = str(current_time).replace(' ', 'T').rsplit('.', maxsplit=1)[0]
+            formatted_end_time = str(end_time).replace(' ', 'T').rsplit('.', maxsplit=1)[0]
             formatted_start_time = str(start_time).replace(' ', 'T').rsplit('.', maxsplit=1)[0]
             logging.info("Retrieving {}. Start time: {}. End time: {}.".format(
                 content_type, formatted_start_time, formatted_end_time))
-            response = self.make_api_request(url='subscriptions/content?contentType={0}&startTime={1}&endTime={2}'.format(
-                content_type, formatted_start_time, formatted_end_time))
+            response = self.make_api_request(url='subscriptions/content?contentType={0}&startTime={1}&endTime={2}'.
+                                                 format(content_type, formatted_start_time, formatted_end_time))
             self.blobs_to_collect[content_type] += response.json()
             while 'NextPageUri' in response.headers.keys() and response.headers['NextPageUri']:
-                logging.log(level=logging.DEBUG, msg='Getting next page of content for type: "{0}"'.format(content_type))
+                logging.log(level=logging.DEBUG, msg='Getting next page of content for type: "{0}"'.
+                            format(content_type))
                 self.blobs_to_collect[content_type] += response.json()
                 response = self.make_api_request(url=response.headers['NextPageUri'], append_url=False)
             logging.log(level=logging.DEBUG, msg='Got {0} content blobs of type: "{1}"'.format(
@@ -426,20 +283,19 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         except Exception as e:
             logging.log(level=logging.DEBUG, msg="Error while getting available content: {}: {}".format(
                 content_type, e))
-            self.content_types.remove(content_type)
+            self._remaining_content_types.remove(content_type)
         else:
-            self.content_types.remove(content_type)
-            self._last_run_times[content_type] = start_time.strftime("%Y-%m-%dT%H:%M:%SZ")
+            self._remaining_content_types.remove(content_type)
 
     def _start_interfaces(self):
 
-        for interface in self.all_enabled_interfaces:
+        for interface in self._all_enabled_interfaces:
             interface.start()
 
-    def _stop_interfaces(self):
+    def _stop_interfaces(self, force):
 
-        for interface in self.all_enabled_interfaces:
-            interface.stop()
+        for interface in self._all_enabled_interfaces:
+            interface.stop(gracefully=not force)
 
     def _monitor_blobs_to_collect(self):
         """
@@ -450,17 +306,16 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         threads = collections.deque()
         while True:
             threads = [thread for thread in threads if thread.is_alive()]
-            if self.done_collecting_available_content and self.done_retrieving_content and not threads:
+            if self._force_stop or \
+                    (self._done_collecting_available_content and self._done_retrieving_content and not threads):
                 break
-            if not self.blobs_to_collect:
-                continue
             for content_type, blobs_to_collect in self.blobs_to_collect.copy().items():
-                if len(threads) >= self.max_threads:
+                if len(threads) >= (self.config['collect', 'maxThreads'] or 50):
                     break
                 if self.blobs_to_collect[content_type]:
                     blob_json = self.blobs_to_collect[content_type].popleft()
                     self._collect_blob(blob_json=blob_json, content_type=content_type, threads=threads)
-        self._stop_interfaces()
+        self._stop_interfaces(force=self._force_stop)
 
     def _collect_blob(self, blob_json, content_type, threads):
         """
@@ -473,7 +328,8 @@ class AuditLogCollector(ApiConnection.ApiConnection):
             logging.log(level=logging.DEBUG, msg='Retrieving content blob: "{0}"'.format(blob_json))
             threads.append(threading.Thread(
                 target=self._retrieve_content, daemon=True,
-                kwargs={'content_json': blob_json, 'content_type': content_type, 'retries': self.retries}))
+                kwargs={'content_json': blob_json, 'content_type': content_type,
+                        'retries': self.config['collect', 'retries'] or 3}))
             threads[-1].start()
 
     def _retrieve_content(self, content_json, content_type, retries):
@@ -484,7 +340,8 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         :param content_type: Type of API being retrieved for, e.g. 'Audit.Exchange' (str)
         :param retries: Times to retry retrieving a content blob if it fails (int)
         """
-        if self.skip_known_logs and self.known_content and content_json['contentId'] in self.known_content:
+        if self.config['collect', 'skipKnownLogs'] and self.known_content and \
+                content_json['contentId'] in self.known_content:
             return
         try:
             results = self.make_api_request(url=content_json['contentUri'], append_url=False).json()
@@ -492,7 +349,7 @@ class AuditLogCollector(ApiConnection.ApiConnection):
                 return
         except Exception as e:
             if retries:
-                time.sleep(self.retry_cooldown)
+                time.sleep(self.config['collect', 'retryCooldown'] or 3)
                 return self._retrieve_content(content_json=content_json, content_type=content_type, retries=retries - 1)
             else:
                 self.errors_retrieving += 1
@@ -508,16 +365,15 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         :param content_type: Type of API being retrieved for, e.g. 'Audit.Exchange' (str)
         :param results: list of JSON
         """
-
-        if self.skip_known_logs:
+        if self.config['collect', 'skipKnownLogs']:
             self._known_content[content_json['contentId']] = content_json['contentExpiration']
         for log in results.copy():
-            if self.skip_known_logs:
+            if self.config['collect', 'skipKnownLogs']:
                 if log['Id'] in self.known_logs:
                     results.remove(log)
                     continue
                 self.known_logs[log['Id']] = log['CreationTime']
-            if self.filters and not self._check_filters(log=log, content_type=content_type):
+            if self.config['collect', 'filter'] and not self._check_filters(log=log, content_type=content_type):
                 results.remove(log)
         self.logs_retrieved += len(results)
         self._output_results(results=results, content_type=content_type)
@@ -527,7 +383,7 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         :param content_type: Type of API being retrieved for, e.g. 'Audit.Exchange' (str)
         :param results: list of JSON
         """
-        for interface in self.all_enabled_interfaces:
+        for interface in self._all_enabled_interfaces:
             interface.send_messages(*results, content_type=content_type)
 
     def _check_filters(self, log, content_type):
@@ -536,8 +392,9 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         :param content_type: Type of API being retrieved for, e.g. 'Audit.Exchange' (str)
         :return: True if log matches filter, False if not (Bool)
         """
-        if content_type in self.filters and self.filters[content_type]:
-            for log_filter_key, log_filter_value in self.filters[content_type].items():
+        filters = self.config['collect', 'filter']
+        if content_type in filters and filters[content_type]:
+            for log_filter_key, log_filter_value in filters[content_type].items():
                 if log_filter_key not in log or log[log_filter_key].lower() != log_filter_value.lower():
                     return False
         return True
@@ -640,6 +497,102 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         return self._known_content
 
 
+class Config(object):
+
+    def __init__(self, path=None, config=None):
+        """
+        Wrapper around the YAML config necessary to run the collector.
+        :param path: str
+        :param config: loaded YAML
+        """
+        self._config = config
+        self.path = path
+        self.requires_parsing = {  # Any settings that require additional parsing go here, with their parsing func
+            ('collect', 'contentTypes'): self.parse_content_types,
+            ('collect', 'schedule'): self.parse_schedule
+        }
+        self._cache = {}
+
+    @property
+    def config(self):
+
+        if not self._config:
+            self.load_config()
+        return self._config
+
+    def load_config(self, path=None):
+        """
+        Load a YML config containing settings for this collector and its' interfaces.
+        :param path: str
+        """
+        self._cache.clear()
+        path = path or self.path
+        with open(path, 'r') as ofile:
+            self._config = yaml.safe_load(ofile)
+
+    def __getitem__(self, item):
+        """
+        Allow searching config settings by e.g. config['Setting1', 'Subsetting2'].
+        :param item:
+        :return:
+        """
+        if item not in self._cache:
+            if item in self.requires_parsing:
+                self._cache[item] = self.requires_parsing[item]()
+            else:
+                self._cache[item] = self._find_setting(*item)
+        return self._cache[item]
+
+    def _find_setting(self, *setting):
+        """
+        Try to find a setting in a passed settings path (e.g. 'Main, Setting1, SubSetting1'). Return None if it does not
+        exist (allows using config files without all settings defined).
+        :param setting: tuple of settings path
+        :return: setting in YAML config (int/str/bool)
+        """
+        root = self.config
+        for child in setting:
+            if child in root:
+                root = root[child]
+            else:
+                return
+        return root
+
+    @property
+    def all_content_types(self):
+        """
+        :return: list of str
+        """
+        return ['Audit.General', 'Audit.AzureActiveDirectory', 'Audit.Exchange', 'Audit.SharePoint', 'DLP.All']
+
+    def parse_schedule(self):
+        """
+        :return: tuple of ints (days/hours/minutes)
+        """
+        schedule = self._find_setting('collect', 'schedule')
+        if not schedule:
+            return
+        try:
+            schedule = [int(x) for x in schedule.split(' ')]
+            assert len(schedule) == 3
+        except Exception as e:
+            raise RuntimeError(
+                "Could not interpret schedule. Make sure it's in the format '0 0 0' (days/hours/minutes) {}"
+                    .format(e))
+        else:
+            return schedule
+
+    def parse_content_types(self):
+        """
+        :return: list of str
+        """
+        content_types = collections.deque()
+        for content_type in self.all_content_types:
+            if self._find_setting('collect', 'contentTypes', content_type):
+                content_types.append(content_type)
+        return content_types
+
+
 if __name__ == "__main__":
 
     description = \
@@ -653,7 +606,7 @@ if __name__ == "__main__":
     parser.add_argument('client_key', type=str, help='Client key of Azure application', action='store')
     parser.add_argument('secret_key', type=str, help='Secret key generated by Azure application', action='store')
     parser.add_argument('--config', metavar='config', type=str, help='Path to YAML config file',
-                        action='store', dest='config')
+                        action='store', dest='config', required=True)
     parser.add_argument('--table-string', metavar='table_string', type=str,
                         help='Connection string for Azure Table output interface', action='store', dest='table_string')
     parser.add_argument('--blob-string', metavar='blob_string', type=str,
@@ -662,41 +615,8 @@ if __name__ == "__main__":
                         help='Connection string for SQL output interface', action='store', dest='sql_string')
     parser.add_argument('--interactive-subscriber', action='store_true',
                         help='Manually (un)subscribe to audit log feeds', dest='interactive_subscriber')
-    parser.add_argument('--general', action='store_true', help='Retrieve General content', dest='general')
-    parser.add_argument('--exchange', action='store_true', help='Retrieve Exchange content', dest='exchange')
-    parser.add_argument('--azure_ad', action='store_true', help='Retrieve Azure AD content', dest='azure_ad')
-    parser.add_argument('--sharepoint', action='store_true', help='Retrieve SharePoint content', dest='sharepoint')
-    parser.add_argument('--dlp', action='store_true', help='Retrieve DLP content', dest='dlp')
-    parser.add_argument('-p', metavar='publisher_id', type=str, help='Publisher GUID to avoid API throttling',
-                        action='store', dest='publisher_id',
-                        default=os.path.join(os.path.dirname(__file__), 'AuditLogCollector.log'))
-    parser.add_argument('-r',
-                        help='Look for last run time and resume looking for content from there (takes precedence over '
-                             '-tH and -tD)', action='store_true', dest='resume')
-    parser.add_argument('-tH', metavar='time_hours', type=int, help='Amount of hours to go back and look for content',
-                        action='store', dest='time_hours')
-    parser.add_argument('-s',
-                        help='Keep track of each retrieved log ID and skip it in the future to prevent duplicates',
-                        action='store_true', dest='skip_known_logs')
-    parser.add_argument('-l', metavar='log_path', type=str, help='Path of log file', action='store', dest='log_path',
-                        default=os.path.join(os.path.dirname(__file__), 'AuditLogCollector.log'))
-    parser.add_argument('-d', action='store_true', dest='debug_logging',
-                        help='Enable debug logging (generates large log files and decreases performance).')
-    parser.add_argument('-f', help='Output to file.', action='store_true', dest='file')
-    parser.add_argument('-fP', metavar='file_output_path', type=str, help='Path of directory of output files',
-                        default=os.path.join(os.path.dirname(__file__), 'output'), action='store',
-                        dest='output_path')
-    parser.add_argument('-P', help='Output to PRTG with PrtgConfig.yaml.', action='store_true', dest='prtg')
-    parser.add_argument('-a', help='Output to Azure Log Analytics workspace.', action='store_true', dest='azure')
-    parser.add_argument('-aC', metavar='azure_workspace', type=str, help='ID of log analytics workspace.',
-                        action='store', dest='azure_workspace')
-    parser.add_argument('-aS', metavar='azure_key', type=str, help='Shared key of log analytics workspace.',
-                        action='store', dest='azure_key')
-    parser.add_argument('-g', help='Output to graylog.', action='store_true', dest='graylog')
-    parser.add_argument('-gA', metavar='graylog_address', type=str, help='Address of graylog server.', action='store',
-                        dest='graylog_addr')
-    parser.add_argument('-gP', metavar='graylog_port', type=str, help='Port of graylog server.', action='store',
-                        dest='graylog_port')
+    parser.add_argument('-p', metavar='publisher_id', type=str, dest='publisher_id',
+                        help='Publisher GUID to avoid API throttling. Defaults to Tenant ID', action='store')
     args = parser.parse_args()
     argsdict = vars(args)
 
@@ -706,37 +626,13 @@ if __name__ == "__main__":
         subscriber.interactive()
         quit(0)
 
-    content_types = []
-    if argsdict['general']:
-        content_types.append('Audit.General')
-    if argsdict['exchange']:
-        content_types.append('Audit.Exchange')
-    if argsdict['sharepoint']:
-        content_types.append('Audit.Sharepoint')
-    if argsdict['azure_ad']:
-        content_types.append('Audit.AzureActiveDirectory')
-    if argsdict['dlp']:
-        content_types.append('DLP.All')
-
-    fallback_time = None
-    if argsdict['time_hours']:
-        fallback_time = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=argsdict['time_hours'])
-
     collector = AuditLogCollector(
+        config_path=argsdict['config'],
         tenant_id=argsdict['tenant_id'], secret_key=argsdict['secret_key'], client_key=argsdict['client_key'],
-        content_types=content_types, publisher_id=argsdict['publisher_id'], resume=argsdict['resume'],
-        fallback_time=fallback_time, skip_known_logs=argsdict['skip_known_logs'], log_path=argsdict['log_path'],
-        file_output=argsdict['file'], path=argsdict['output_path'], debug=argsdict['debug_logging'],
-        prtg_output=argsdict['prtg'],
-        azure_oms_output=argsdict['azure'], workspace_id=argsdict['azure_workspace'],
-        shared_key=argsdict['azure_key'],
-        gl_address=argsdict['graylog_addr'], gl_port=argsdict['graylog_port'],
-        graylog_output=argsdict['graylog'],
-        sql_connection_string=argsdict['sql_string'], table_connection_string=argsdict['table_string'],
-        blob_connection_string=argsdict['blob_string'])
-    if argsdict['config']:
-        collector.load_config(path=argsdict['config'])
-    collector.init_logging()
-    collector.run_once()
+        publisher_id=argsdict['publisher_id'], sql_connection_string=argsdict['sql_string'],
+        table_connection_string=argsdict['table_string'], blob_connection_string=argsdict['blob_string'])
+
+    signal.signal(signal.SIGINT, collector.force_stop)
+    collector.run()
 
 
