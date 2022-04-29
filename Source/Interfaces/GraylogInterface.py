@@ -1,4 +1,5 @@
 from . import _Interface
+import datetime
 import logging
 import socket
 import json
@@ -18,6 +19,7 @@ class GraylogInterface(_Interface.Interface):
         otherwise Graylog will interpret it as a single large message.
         :param msg: dict
         """
+        msg = self._add_timestamp_field(msg)
         msg_string = json.dumps(msg)
         if not msg_string:
             return
@@ -43,6 +45,19 @@ class GraylogInterface(_Interface.Interface):
             logging.error("Error sending message to graylog: {}.".format(e))
         sock.close()
         self.successfully_sent += 1
+
+    @staticmethod
+    def _add_timestamp_field(msg):
+        """
+        Microsoft uses the CreationTime field for the datetime of the creation of the log. Graylog uses Timestamp for
+        this by default. Add a Timestamp log to a msg with a Graylog compatible datetime for convencience.
+        :param msg: JSON dict
+        :return: JSON dict
+        """
+        creation_time = datetime.datetime.strptime(msg['CreationTime'], "%Y-%m-%dT%H:%M:%S")
+        timestamp = creation_time.strftime("%Y-%m-%d %H:%M:%S.%f")
+        msg['timestamp'] = timestamp
+        return msg
 
     def _connect_to_graylog_input(self):
         """

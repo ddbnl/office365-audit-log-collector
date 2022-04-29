@@ -109,7 +109,8 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         the sensor result.
         """
         logger = logging.getLogger()
-        file_handler = logging.FileHandler(self.config['log', 'path'].strip("'") or 'collector.log', mode='w')
+        file_handler = logging.FileHandler(self.config['log', 'path'].strip("'") if self.config['log', 'path']
+                                           else 'collector.log', mode='w')
         if not self.interfaces[PRTGInterface.PRTGInterface].enabled:
             stream_handler = logging.StreamHandler(sys.stdout)
             logger.addHandler(stream_handler)
