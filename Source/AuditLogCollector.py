@@ -81,9 +81,9 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         else:
             days, hours, minutes = self.config['collect', 'schedule']
             target_time = self.run_started + datetime.timedelta(days=days, hours=hours, minutes=minutes)
+            if datetime.datetime.now() > target_time:
+                logging.warning("Warning: last run took longer than the scheduled interval.")
         logging.info("Next run is scheduled for: {}.".format(target_time))
-        if datetime.datetime.now() > target_time:
-            logging.warning("Warning: last run took longer than the scheduled interval.")
         while True:
             if datetime.datetime.now() > target_time:
                 self.run_once()
@@ -109,7 +109,7 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         the sensor result.
         """
         logger = logging.getLogger()
-        file_handler = logging.FileHandler(self.config['log', 'log_path'] or 'collector.log', mode='w')
+        file_handler = logging.FileHandler(self.config['log', 'path'].strip("'") or 'collector.log', mode='w')
         if not self.interfaces[PRTGInterface.PRTGInterface].enabled:
             stream_handler = logging.StreamHandler(sys.stdout)
             logger.addHandler(stream_handler)
@@ -122,7 +122,6 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         """
         self.config.load_config()
         self._remaining_content_types = self.config['collect', 'contentTypes'] or collections.deque()
-        logging.info("Bewww: {}".format(self._remaining_content_types))
         if self.config['collect', 'autoSubscribe']:
             self._auto_subscribe()
         if self.config['collect', 'resume']:
@@ -172,7 +171,7 @@ class AuditLogCollector(ApiConnection.ApiConnection):
                 logging.error("Could not read last run times file: {}.".format(e))
             for content_type, last_run_time in self._last_run_times.items():
                 try:
-                    self._last_run_times[content_type] = datetime.datetime.strptime(last_run_time, "%Y-%m-%dT%H:%M:%SZ")
+                    self._last_run_times[content_type] = datetime.datetime.strptime(last_run_time, "%Y-%m-%dT%H:%M:%S%z")
                 except Exception as e:
                     logging.error("Could not read last run time for content type {}: {}.".format(content_type, e))
                     del self._last_run_times[content_type]
@@ -215,6 +214,8 @@ class AuditLogCollector(ApiConnection.ApiConnection):
             raise RuntimeError("Auto subscribe enabled but could not get subscription status")
         unsubscribed_content_types = self._remaining_content_types.copy()
         for s in status:
+            if isinstance(s, str):  # For issue #18
+                raise RuntimeError("Auto subscribe enabled but could not get subscription status")
             if s['contentType'] in self._remaining_content_types and s['status'].lower() == 'enabled':
                 unsubscribed_content_types.remove(s['contentType'])
         for content_type in unsubscribed_content_types:
@@ -225,26 +226,47 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         """
         Start a thread to retrieve available content blobs for each content type to be collected.
         """
+        end_time = datetime.datetime.now(datetime.timezone.utc)
         for content_type in self._remaining_content_types.copy():
-            if self.config['resume'] and content_type in self._last_run_times.keys():
+            if self.config['collect', 'resume'] and content_type in self._last_run_times.keys():
                 start_time = self._last_run_times[content_type]
+                logging.info("{} - resuming from: {}".format(content_type, start_time))
             else:
-                hours_to_collect = self.config['collect', 'hoursToCollect'] or 23
+                hours_to_collect = self.config['collect', 'hoursToCollect'] or 24
                 start_time = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=hours_to_collect)
-            self.retrieve_available_content_threads.append(threading.Thread(
-                target=self._get_available_content, daemon=True,
-                kwargs={'content_type': content_type, 'start_time': start_time}))
-            self.retrieve_available_content_threads[-1].start()
 
-    def _get_available_content(self, content_type, start_time):
+            if end_time - start_time > datetime.timedelta(hours=168):
+                logging.warning("Hours to collect cannot be more than 168 due to Office API limits, defaulting to 168")
+                end_time = start_time + datetime.timedelta(hours=168)
+            while True:
+                if end_time - start_time > datetime.timedelta(hours=24):
+                    split_start_time = start_time
+                    split_end_time = start_time + datetime.timedelta(hours=24)
+                    self._start_get_available_content_thread(
+                        content_type=content_type, start_time=split_start_time, end_time=split_end_time)
+                    start_time = split_end_time
+                    self._remaining_content_types.append(content_type)
+                else:
+                    self._start_get_available_content_thread(
+                        content_type=content_type, start_time=start_time, end_time=end_time)
+                    break
+            self._last_run_times[content_type] = end_time.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    def _start_get_available_content_thread(self, content_type, start_time, end_time):
+
+        self.retrieve_available_content_threads.append(threading.Thread(
+            target=self._get_available_content, daemon=True,
+            kwargs={'content_type': content_type, 'start_time': start_time, 'end_time': end_time}))
+        self.retrieve_available_content_threads[-1].start()
+
+    def _get_available_content(self, content_type, start_time, end_time):
         """
         Retrieve available content blobs for a content type. If the response contains a
         'NextPageUri' there is more content to be retrieved; rerun until all has been retrieved.
         """
         try:
             logging.log(level=logging.DEBUG, msg='Getting available content for type: "{}"'.format(content_type))
-            current_time = datetime.datetime.now(datetime.timezone.utc)
-            formatted_end_time = str(current_time).replace(' ', 'T').rsplit('.', maxsplit=1)[0]
+            formatted_end_time = str(end_time).replace(' ', 'T').rsplit('.', maxsplit=1)[0]
             formatted_start_time = str(start_time).replace(' ', 'T').rsplit('.', maxsplit=1)[0]
             logging.info("Retrieving {}. Start time: {}. End time: {}.".format(
                 content_type, formatted_start_time, formatted_end_time))
@@ -264,7 +286,6 @@ class AuditLogCollector(ApiConnection.ApiConnection):
             self._remaining_content_types.remove(content_type)
         else:
             self._remaining_content_types.remove(content_type)
-            self._last_run_times[content_type] = start_time.strftime("%Y-%m-%dT%H:%M:%SZ")
 
     def _start_interfaces(self):
 
@@ -555,10 +576,9 @@ class Config(object):
             schedule = [int(x) for x in schedule.split(' ')]
             assert len(schedule) == 3
         except Exception as e:
-            logging.error(
+            raise RuntimeError(
                 "Could not interpret schedule. Make sure it's in the format '0 0 0' (days/hours/minutes) {}"
                     .format(e))
-            quit()
         else:
             return schedule
 

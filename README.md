@@ -44,9 +44,7 @@ See the following link for more info on the management APIs: https://msdn.micros
 
 ## Roadmap:
 
-- Automate onboarding as much as possible to make it easier to use
-- Make a container that runs this script
-- Create a tutorial for automatic onboarding + docker container for the easiest way to run this
+- Rewrite the collector in Rust. Prototype is finished and runs 5x faster already.
 
 ## Latest changes:
 - Added Azure Blob and Azure Table outputs
