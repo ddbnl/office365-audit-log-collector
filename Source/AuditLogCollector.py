@@ -1,5 +1,6 @@
 from Interfaces import AzureOMSInterface, SqlInterface, GraylogInterface, PRTGInterface, FileInterface, \
     AzureTableInterface, AzureBlobInterface
+import alc  # Rust based log collector Engine
 import AuditLogSubscriber
 import ApiConnection
 import os
@@ -64,12 +65,26 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         Check available content and retrieve it, then exit.
         """
         self._prepare_to_run()
+        content_types = self.config['collect', 'contentTypes']
         logging.log(level=logging.INFO, msg='Starting run @ {}. Content: {}.'.format(
-            datetime.datetime.now(), self._remaining_content_types))
-        self._start_monitoring()
-        self._get_all_available_content()
-        while self.monitor_thread.is_alive():
-            self.monitor_thread.join(1)
+            datetime.datetime.now(), content_types))
+        if self.config['collect', 'rustEngine']:
+            runs = self._get_needed_runs(content_types=content_types.copy())
+            results = alc.run_once(self.tenant_id, self.client_key, self.secret_key, self.tenant_id,
+                                   content_types, runs)
+            self._start_interfaces()
+            for content_type, results in results.items():
+                while results:
+                    content_id, content_expiration, content_json = results.pop()
+                    content_json = json.loads(content_json)
+                    self._handle_retrieved_content(content_id=content_id, content_expiration=content_expiration,
+                                                   content_type=content_type, results=content_json)
+            self._stop_interfaces(force=False)
+        else:
+            self._start_monitoring()
+            self._get_all_available_content()
+            while self.monitor_thread.is_alive():
+                self.monitor_thread.join(1)
         self._finish_run()
 
     def run_scheduled(self):
@@ -223,12 +238,15 @@ class AuditLogCollector(ApiConnection.ApiConnection):
             logging.info("Auto subscribing to: {}".format(content_type))
             subscriber.set_sub_status(content_type=content_type, action='start')
 
-    def _get_all_available_content(self):
+    def _get_needed_runs(self, content_types):
         """
-        Start a thread to retrieve available content blobs for each content type to be collected.
+        Return the start- and end times needed to retrieve content for each content type. If the timespan to retrieve
+        logs for exceeds 24 hours, we need to split it up into 24 hour runs (limit by Office API).
         """
+        runs = {}
         end_time = datetime.datetime.now(datetime.timezone.utc)
-        for content_type in self._remaining_content_types.copy():
+        for content_type in content_types:
+            runs[content_type] = []
             if self.config['collect', 'resume'] and content_type in self._last_run_times.keys():
                 start_time = self._last_run_times[content_type]
                 logging.info("{} - resuming from: {}".format(content_type, start_time))
@@ -243,15 +261,29 @@ class AuditLogCollector(ApiConnection.ApiConnection):
                 if end_time - start_time > datetime.timedelta(hours=24):
                     split_start_time = start_time
                     split_end_time = start_time + datetime.timedelta(hours=24)
-                    self._start_get_available_content_thread(
-                        content_type=content_type, start_time=split_start_time, end_time=split_end_time)
+                    formatted_start_time = str(split_start_time).replace(' ', 'T').rsplit('.', maxsplit=1)[0]
+                    formatted_end_time = str(split_end_time).replace(' ', 'T').rsplit('.', maxsplit=1)[0]
+                    runs[content_type].append((formatted_start_time, formatted_end_time))
                     start_time = split_end_time
                     self._remaining_content_types.append(content_type)
                 else:
-                    self._start_get_available_content_thread(
-                        content_type=content_type, start_time=start_time, end_time=end_time)
+                    formatted_start_time = str(start_time).replace(' ', 'T').rsplit('.', maxsplit=1)[0]
+                    formatted_end_time = str(end_time).replace(' ', 'T').rsplit('.', maxsplit=1)[0]
+                    runs[content_type].append((formatted_start_time, formatted_end_time))
                     break
             self._last_run_times[content_type] = end_time.strftime("%Y-%m-%dT%H:%M:%SZ")
+        return runs
+
+    def _get_all_available_content(self):
+        """
+        Start a thread to retrieve available content blobs for each content type to be collected.
+        """
+        runs = self._get_needed_runs(content_types=self._remaining_content_types.copy())
+        for content_type, run_dates in runs.items():
+            for run_date in run_dates:
+                start_time, end_time = run_date
+                self._start_get_available_content_thread(
+                    content_type=content_type, start_time=start_time, end_time=end_time)
 
     def _start_get_available_content_thread(self, content_type, start_time, end_time):
 
@@ -267,12 +299,10 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         """
         try:
             logging.log(level=logging.DEBUG, msg='Getting available content for type: "{}"'.format(content_type))
-            formatted_end_time = str(end_time).replace(' ', 'T').rsplit('.', maxsplit=1)[0]
-            formatted_start_time = str(start_time).replace(' ', 'T').rsplit('.', maxsplit=1)[0]
             logging.info("Retrieving {}. Start time: {}. End time: {}.".format(
-                content_type, formatted_start_time, formatted_end_time))
+                content_type, start_time, end_time))
             response = self.make_api_request(url='subscriptions/content?contentType={0}&startTime={1}&endTime={2}'.
-                                                 format(content_type, formatted_start_time, formatted_end_time))
+                                                 format(content_type, start_time, end_time))
             self.blobs_to_collect[content_type] += response.json()
             while 'NextPageUri' in response.headers.keys() and response.headers['NextPageUri']:
                 logging.log(level=logging.DEBUG, msg='Getting next page of content for type: "{0}"'.
@@ -357,17 +387,20 @@ class AuditLogCollector(ApiConnection.ApiConnection):
                 logging.error("Error retrieving content: {}".format(e))
                 return
         else:
-            self._handle_retrieved_content(content_json=content_json, content_type=content_type, results=results)
+            self._handle_retrieved_content(
+                content_id=content_json['contentId'], content_expiration=content_json['contentExpiration'],
+                content_type=content_type, results=results)
 
-    def _handle_retrieved_content(self, content_json, content_type, results):
+    def _handle_retrieved_content(self, content_id, content_expiration, content_type, results):
         """
         Check known logs, filter results and output what remains.
-        :param content_json: JSON dict of the content blob as retrieved from the API (dict)
+        :param content_id: ID of content blob from API (str)
+        :param content_expiration: date string of expiration of content blob from API (str)
         :param content_type: Type of API being retrieved for, e.g. 'Audit.Exchange' (str)
         :param results: list of JSON
         """
         if self.config['collect', 'skipKnownLogs']:
-            self._known_content[content_json['contentId']] = content_json['contentExpiration']
+            self._known_content[content_id] = content_expiration
         for log in results.copy():
             if self.config['collect', 'skipKnownLogs']:
                 if log['Id'] in self.known_logs:

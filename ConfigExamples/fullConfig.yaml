@@ -2,6 +2,7 @@ log:  # Log settings. Debug will severely decrease performance
   path: 'collector.log'
   debug: False
 collect:  # Settings determining which audit logs to collect and how to do it
+  rustEngine: False  # Use True to turn on the experimental far faster Rust engine
   schedule: 0 1 0  # How often to run in days/hours/minutes. Delete this line to just run once and exit.
   contentTypes:
     Audit.General: True
