@@ -5,11 +5,9 @@ collect:
     Audit.Exchange: True
     Audit.SharePoint: True
     DLP.All: True
-  skipKnownLogs: True
-  resume: True
-  autosubscribe: True
 output:
   fluentd:
     enabled: True
+    tenantName: MyTenant
     address: fluentd
     port: 24224

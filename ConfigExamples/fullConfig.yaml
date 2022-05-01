@@ -57,3 +57,8 @@ output:
   prtg:
     enabled: False
     channels:
+  fluentd:
+    enabled: True
+    tenantName:
+    address:
+    port:

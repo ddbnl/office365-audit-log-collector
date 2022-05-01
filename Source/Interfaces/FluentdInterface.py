@@ -1,52 +1,48 @@
 from . import _Interface
-import collections
 import logging
-import threading
-import socket
-import json
-import time
 from fluent import sender
 
 
 class FluentdInterface(_Interface.Interface):
 
-    def __init__(self, fl_address=None, fl_port=None, cache_size=500000, tenant_name=None, **kwargs):
+    def __init__(self, **kwargs):
 
         super().__init__(**kwargs)
-        self.fl_address = fl_address
-        self.fl_port = fl_port
-        self.cache_size = cache_size
-        self.results_cache = collections.defaultdict(collections.deque)
-        self.tenant_name = tenant_name
+        self._logger = None
 
     @property
-    def total_cache_length(self):
+    def enabled(self):
 
-        return sum([len(self.results_cache[k]) for k in self.results_cache.keys()])
-    
-    def _send_message(self, msg, content_type, retries=3, **kwargs):
-        self.results_cache[content_type].append(msg)
-        if self.total_cache_length >= self.cache_size:
-            self._process_caches()
-        
-    def exit_callback(self):
+        return self.collector.config['output', 'fluentd', 'enabled']
 
-        self._process_caches()
+    @property
+    def address(self):
 
-    def _process_caches(self):
+        return self.collector.config['output', 'fluentd', 'address']
 
-        for content_type in self.results_cache.keys():
-            self._process_cache(content_type=content_type)
+    @property
+    def port(self):
 
-    def _process_cache(self, content_type):
-        amount = len(self.results_cache[content_type])
+        return self.collector.config['output', 'fluentd', 'port']
+
+    @property
+    def tenant_name(self):
+
+        return self.collector.config['output', 'fluentd', 'tenantName']
+
+    @property
+    def logger(self):
+
+        if not self._logger:
+            self._logger = sender.FluentSender('o365', host=self.address, port=int(self.port))
+        return self._logger
+
+    def _send_message(self, msg, content_type, **kwargs):
+
         try:
-            logger = sender.FluentSender('o365', host=self.fl_address, port=int(self.fl_port))
-            for msg in self.results_cache[content_type]:
-                msg['tenant'] = self.tenant_name
-                logger.emit(content_type,msg)
+            msg['tenant'] = self.tenant_name
+            self.logger.emit(content_type, msg)
+            self.successfully_sent += 1
         except Exception as e:
-            self.unsuccessfully_sent += amount
-            raise e
-        else:
-            self.successfully_sent += amount
+            logging.error("Error outputting to Fluentd: {}".format(e))
+            self.unsuccessfully_sent += 1
