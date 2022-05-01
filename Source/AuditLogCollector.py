@@ -46,6 +46,7 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         self.run_started = None
         self.logs_retrieved = 0
         self.errors_retrieving = 0
+        self.retries = 0
 
     def force_stop(self, *args):
 
@@ -65,20 +66,11 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         Check available content and retrieve it, then exit.
         """
         self._prepare_to_run()
-        content_types = self.config['collect', 'contentTypes']
         logging.log(level=logging.INFO, msg='Starting run @ {}. Content: {}.'.format(
-            datetime.datetime.now(), content_types))
+            datetime.datetime.now(), self.config['collect', 'contentTypes']))
         if self.config['collect', 'rustEngine']:
-            runs = self._get_needed_runs(content_types=content_types.copy())
-            results = alc.run_once(self.tenant_id, self.client_key, self.secret_key, self.tenant_id,
-                                   content_types, runs)
             self._start_interfaces()
-            for content_type, results in results.items():
-                while results:
-                    content_id, content_expiration, content_json = results.pop()
-                    content_json = json.loads(content_json)
-                    self._handle_retrieved_content(content_id=content_id, content_expiration=content_expiration,
-                                                   content_type=content_type, results=content_json)
+            self.receive_results_from_rust_engine()
             self._stop_interfaces(force=False)
         else:
             self._start_monitoring()
@@ -86,6 +78,34 @@ class AuditLogCollector(ApiConnection.ApiConnection):
             while self.monitor_thread.is_alive():
                 self.monitor_thread.join(1)
         self._finish_run()
+
+    def receive_results_from_rust_engine(self):
+
+        runs = self._get_needed_runs(content_types=self.config['collect', 'contentTypes'].copy())
+        engine = alc.RustEngine(self.tenant_id, self.client_key, self.secret_key, self.publisher_id or self.tenant_id,
+                                self.config['collect', 'contentTypes'], runs,
+                                self.config['collect', 'maxThreads'] or 50,
+                                self.config['collect', 'retries'] or 3)
+        engine.run_once()
+        last_received = datetime.datetime.now()
+        while True:
+            try:
+                result = engine.get_result()
+            except ValueError:  # RustEngine throws this error when no logs are in the results recv queue
+                now = datetime.datetime.now()
+                if now - last_received > datetime.timedelta(seconds=60):
+                    logging.error("Timed out waiting for results from engine")
+                    break
+                last_received = now
+            except EOFError:  # RustEngine throws this error when all content has been retrieved
+                print("Finished run")
+                break
+            else:
+                content_json, content_id, content_expiration, content_type = result
+                self._handle_retrieved_content(content_id=content_id, content_expiration=content_expiration,
+                                               content_type=content_type, results=json.loads(content_json))
+                self.logs_retrieved += 1
+        _, _, self.retries, self.errors_retrieving = engine.stop()
 
     def run_scheduled(self):
         """
@@ -169,8 +189,8 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         """
         Write run statistics to log file / console.
         """
-        logging.info("Finished. Total logs retrieved: {}. Total logs with errors: {}. Run time: {}.".format(
-            self.logs_retrieved, self.errors_retrieving, datetime.datetime.now() - self.run_started))
+        logging.info("Finished. Total logs retrieved: {}. Total retries: {}. Total logs with errors: {}. Run time: {}."
+            .format(self.logs_retrieved, self.retries, self.errors_retrieving, datetime.datetime.now() - self.run_started))
         for interface in self._all_enabled_interfaces:
             logging.info("{} reports: {} successfully sent, {} errors".format(
                 interface.__class__.__name__, interface.successfully_sent, interface.unsuccessfully_sent))
@@ -380,6 +400,7 @@ class AuditLogCollector(ApiConnection.ApiConnection):
                 return
         except Exception as e:
             if retries:
+                self.retries += 1
                 time.sleep(self.config['collect', 'retryCooldown'] or 3)
                 return self._retrieve_content(content_json=content_json, content_type=content_type, retries=retries - 1)
             else:

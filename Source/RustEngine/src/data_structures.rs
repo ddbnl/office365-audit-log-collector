@@ -28,6 +28,7 @@ pub enum StatusMessage {
     FinishedContentBlobs,  // Finished getting all content blobs for e.g. Audit.Exchange
     FoundNewContentBlob,  // Found a new blob to retrieved
     RetrievedContentBlob, // Finished retrieving a new blob
+    ErrorContentBlob, // Could not retrieve a blob
 }
 
 /// Used by thread getting content blobs
@@ -38,6 +39,7 @@ pub struct GetBlobConfig {
     pub blobs_tx: Sender<(String, String)>,
     pub blob_error_tx: Sender<(String, String)>,
     pub content_tx: Sender<ContentToRetrieve>,
+    pub threads: usize,
 }
 
 
@@ -45,9 +47,10 @@ pub struct GetBlobConfig {
 pub struct GetContentConfig {
     pub client: reqwest::Client,
     pub headers: HeaderMap,
-    pub result_tx: Sender<(String, ContentToRetrieve)>,
+    pub result_tx: std::sync::mpsc::Sender<(String, ContentToRetrieve)>,
     pub content_error_tx: Sender<ContentToRetrieve>,
-    pub status_tx: Sender<StatusMessage>
+    pub status_tx: Sender<StatusMessage>,
+    pub threads: usize,
 }
 
 
@@ -55,11 +58,28 @@ pub struct GetContentConfig {
 /// finished.
 pub struct MessageLoopConfig {
     pub status_rx: Receiver<StatusMessage>,
-    pub result_rx: Receiver<(String, ContentToRetrieve)>,
+    pub stats_tx: std::sync::mpsc::Sender<(usize, usize, usize, usize)>,
     pub blobs_tx: Sender<(String, String)>,
     pub blob_error_rx: Receiver<(String, String)>,
     pub content_tx: Sender<ContentToRetrieve>,
     pub content_error_rx: Receiver<ContentToRetrieve>,
     pub urls: Vec<(String, String)>,
     pub content_types: Vec<String>,
+    pub retries: usize,
+}
+
+
+pub struct RunStatistics {
+    pub blobs_found: usize,
+    pub blobs_successful: usize,
+    pub blobs_error: usize,
+    pub blobs_retried: usize,
+}
+
+impl RunStatistics {
+    pub fn new() -> RunStatistics {
+        RunStatistics {
+            blobs_found: 0, blobs_successful: 0, blobs_error: 0, blobs_retried: 0
+        }
+    }
 }

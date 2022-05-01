@@ -4,14 +4,11 @@ use log::{debug, info, warn, error};
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap};
 use tokio;
 use serde_json;
-use chrono::{Utc, DateTime};
+use chrono::{DateTime};
 use futures::{SinkExt, StreamExt};
 use futures::channel::mpsc::{Receiver, Sender};
 use crate::data_structures::{JsonList, StatusMessage, GetBlobConfig, GetContentConfig,
                              AuthResult, ContentToRetrieve};
-
-
-const PARALLEL_REQUESTS:usize = 200;
 
 
 /// Return a logged in API connection object. Use the Headers value to make API requests.
@@ -88,7 +85,7 @@ pub fn create_base_urls(
 
 #[tokio::main(flavor="multi_thread", worker_threads=200)]
 pub async fn get_content_blobs(config: GetBlobConfig, blobs_rx: Receiver<(String, String)>) {
-    blobs_rx.for_each_concurrent(PARALLEL_REQUESTS, |(content_type, url)| {
+    blobs_rx.for_each_concurrent(config.threads, |(content_type, url)| {
         let blobs_tx = config.blobs_tx.clone();
         let blob_error_tx = config.blob_error_tx.clone();
         let status_tx = config.status_tx.clone();
@@ -98,7 +95,8 @@ pub async fn get_content_blobs(config: GetBlobConfig, blobs_rx: Receiver<(String
         let content_type = content_type.clone();
         let url = url.clone();
         async move {
-            match client.get(url.clone()).headers(headers.clone()).send().await {
+            match client.get(url.clone()).timeout(std::time::Duration::from_secs(5)).
+                headers(headers.clone()).send().await {
                 Ok(resp) => {
                     handle_blob_response(resp, blobs_tx, status_tx, content_tx, blob_error_tx,
                     content_type, url).await;
@@ -131,7 +129,7 @@ async fn handle_blob_response(
             match blob_error_tx.send((content_type, url)).await {
                 Err(e) => {
                     error!("Could not resend failed blob, dropping it: {}", e);
-                    status_tx.send(StatusMessage::RetrievedContentBlob).await.unwrap();
+                    status_tx.send(StatusMessage::ErrorContentBlob).await.unwrap();
                 },
                 _=> (),
             }
@@ -194,22 +192,23 @@ async fn handle_blob_response_error(
     match blob_error_tx.send((content_type, url)).await {
         Err(e) => {
             error!("Could not resend failed blob, dropping it: {}", e);
-            status_tx.send(StatusMessage::RetrievedContentBlob).await.unwrap();
+            status_tx.send(StatusMessage::ErrorContentBlob).await.unwrap();
         },
         _=> (),
     }
 }
 
-#[tokio::main(flavor="multi_thread", worker_threads=50)]
+#[tokio::main(flavor="multi_thread", worker_threads=200)]
 pub async fn get_content(config: GetContentConfig, content_rx: Receiver<ContentToRetrieve>) {
-    content_rx.for_each_concurrent(PARALLEL_REQUESTS, |content_to_retrieve| {
+    content_rx.for_each_concurrent(config.threads, |content_to_retrieve| {
         let client = config.client.clone();
         let headers = config.headers.clone();
         let result_tx = config.result_tx.clone();
         let status_tx = config.status_tx.clone();
         let content_error_tx = config.content_error_tx.clone();
         async move {
-            match client.get(content_to_retrieve.url.clone()).headers(headers).send().await {
+            match client.get(content_to_retrieve.url.clone())
+                .timeout(std::time::Duration::from_secs(5)).headers(headers).send().await {
                 Ok(resp) => {
                     handle_content_response(resp, result_tx, status_tx, content_error_tx,
                     content_to_retrieve).await;
@@ -226,13 +225,13 @@ pub async fn get_content(config: GetContentConfig, content_rx: Receiver<ContentT
 
 
 async fn handle_content_response(
-    resp: reqwest::Response, mut result_tx: Sender<(String, ContentToRetrieve)>,
+    resp: reqwest::Response, result_tx: std::sync::mpsc::Sender<(String, ContentToRetrieve)>,
     mut status_tx: Sender<StatusMessage>, mut content_error_tx: Sender<ContentToRetrieve>,
     content_to_retrieve: ContentToRetrieve) {
 
     match resp.text().await {
         Ok(json) => {
-            result_tx.send((json, content_to_retrieve)).await.unwrap();
+            result_tx.send((json, content_to_retrieve)).unwrap();
             status_tx.send(StatusMessage::RetrievedContentBlob).await.unwrap();
         }
         Err(e) => {
@@ -240,7 +239,7 @@ async fn handle_content_response(
             match content_error_tx.send(content_to_retrieve).await {
                 Err(e) => {
                     error!("Could not resend failed content, dropping it: {}", e);
-                    status_tx.send(StatusMessage::RetrievedContentBlob).await.unwrap();
+                    status_tx.send(StatusMessage::ErrorContentBlob).await.unwrap();
                 },
                 _=> (),
             }
@@ -255,7 +254,7 @@ async fn handle_content_response_error(
         match content_error_tx.send(content_to_retrieve).await {
         Err(e) => {
             error!("Could not resend failed content, dropping it: {}", e);
-            status_tx.send(StatusMessage::RetrievedContentBlob).await.unwrap();
+            status_tx.send(StatusMessage::ErrorContentBlob).await.unwrap();
         },
         _=> (),
     }
