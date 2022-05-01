@@ -55,7 +55,7 @@ class GraylogInterface(_Interface.Interface):
         :return: JSON dict
         """
         creation_time = datetime.datetime.strptime(msg['CreationTime'], "%Y-%m-%dT%H:%M:%S")
-        timestamp = creation_time.strftime("%Y-%m-%d %H:%M:%S.%f")
+        timestamp = creation_time.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
         msg['timestamp'] = timestamp
         return msg
 
