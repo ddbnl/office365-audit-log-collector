@@ -2,13 +2,13 @@ log:  # Log settings. Debug will severely decrease performance
   path: 'collector.log'
   debug: False
 collect:  # Settings determining which audit logs to collect and how to do it
-  schedule: 0 1 0  # How often to run in days/hours/minutes. Delete this line to just run once and exit.
   contentTypes:
     Audit.General: True
     Audit.AzureActiveDirectory: True
     Audit.Exchange: True
     Audit.SharePoint: True
     DLP.All: True
+  schedule: 0 1 0  # How often to run in days/hours/minutes. Delete this line to just run once and exit.
   maxThreads: 50  # Maximum number of simultaneous threads retrieving logs
   retries: 3  # Times to retry retrieving a content blob if it fails
   retryCooldown: 3  # Seconds to wait before retrying retrieving a content blob

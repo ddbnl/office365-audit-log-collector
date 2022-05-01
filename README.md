@@ -1,8 +1,9 @@
 # Office365 audit log collector
 
-Collect/retrieve Office365, Azure and DLP audit logs, optionally filter them, then send them to one or more outputs such as file, PRTG, Azure Log Analytics or Graylog.
-Onboarding is easy and takes only a few minutes (steps described below). There are Windows and Linux executables, and an optional GUI for Windows only.
-Easy configuration with a YAML config file (see the 'ConfigExamples' folder for reference).
+Collect/retrieve Office365, Azure and DLP audit logs, optionally filter them, then send them to one or more outputs 
+(see full list below).
+Onboarding is easy and takes only a few minutes (see 'Onboarding' section). There are Windows and Linux executables.
+Configuration is easy with a YAML config file (see the 'ConfigExamples' folder for reference).
 If you have any issues or questions, or requests for additional interfaces, feel free to create an issue in this repo.
 - The following Audit logs can be extracted:
   - Audit.General
@@ -17,36 +18,39 @@ If you have any issues or questions, or requests for additional interfaces, feel
   - PRTG Network Monitor
   - ( Azure ) SQL server
   - Graylog (or any other source that accepts a simple socket connection)
+  - Fluentd
   - CSV Local file
   - Power BI (indirectly through SQL, CSV, Azure Tables or Azure Blob)
 
-Simply download the executable you need from the Windows or Linux folder and copy a config file from the ConfigExamples folder that suits your need:
-- Windows:
-  - GUI-OfficeAuditLogCollector.exe
-    - GUI for collecting audit logs and subscribing to audit log feeds
-  - OfficeAuditLogCollector.exe
-    - Command line tool for collecting audit logs and (automatically) subscribing to audit log feeds
-- Linux:
-  - OfficeAuditLogCollector
-    - Command line tool for collecting audit logs and (automatically) subscribing to audit log feeds
-
-Find onboarding instructions and more detailed instructions for using the executables below.
+Simply download the executable you need from the Windows or Linux folder and copy a config file from the ConfigExamples
+folder that suits your need. Find onboarding instructions and more detailed instructions for using the executables below.
 
 For a full audit trail, schedule to run the collector on a regular basis (preferably at least once every day). Previously
 retrieved logs can be remembered to prevent duplicates. Consider using the following parameters in the config file for a robust audit trail:
 - skipKnownLogs: True (prevent duplicates)
-- hoursToCollect: 24 (the maximum, or a number larger than the amount of hours between runs, for safety overlap)
+- hoursToCollect: 24 (or a number larger than the amount of hours between runs, for safety overlap)
 - resume: False (don't resume where the last run stopped, have some overlap in case anything was missed for any reason)
 See below for a more detailed instruction of the config file.
 
 Lastly, feel free to contribute other outputs if you happen to build any. Also open to any other useful pull requests!
 See the following link for more info on the management APIs: https://msdn.microsoft.com/en-us/office-365/office-365-management-activity-api-reference.
 
+## Use cases:
+
+- Ad-lib log retrieval;
+- Scheduling regular execution to retrieve the full audit trail
+- Output to Graylog/fluentd for full audit trails in SIEM
+- Output to PRTG for alerts on audit logs
+- Output to (Azure) SQL / CSV for Power BI
+- Etc.
+
 ## Roadmap:
 
 - Rewrite the collector in Rust. Prototype is finished and runs 5x faster already.
 
 ## Latest changes:
+- Added native timestamp field to logs for graylog output
+- Added fluentd support (thanks @owentl)
 - Added Azure Blob and Azure Table outputs
 - Added SQL output for Power BI
 - Changed file to CSV output
@@ -65,25 +69,6 @@ See the following link for more info on the management APIs: https://msdn.micros
 - Don't start graylog output unnecessarily
 - Fixed file output
 
-## Use cases:
-
-- Ad-lib log retrieval;
-- Scheduling regular execution to retrieve the full audit trail in SIEM
-- Output to PRTG for alerts on audit logs
-- Output to (Azure) SQL / CSV for Power BI
-
-## Features:
-
-- Subscribe to the audit logs of your choice through the --interactive-subscriber switch, or automatically when collecting logs;
-- Collect General, Exchange, Sharepoint, Azure active directory and/or DLP audit logs through the collector script;
-- Output to CSV, PRTG, Azure Log Analytics, SQL or to a Graylog input (i.e. send the logs over a network socket).
-
-## Requirements:
-- Office365 tenant;
-- Azure app registration created for this script (see onboarding instructions)
-- Secret key (created in the new Azure app registration, see instructions);
-- App permissions to access the APIs for the new Azure application (see instructions);
-- Subscription to the APIs of your choice (use autoSubscribe option in the config file to automate this).
 
 ## Instructions:
 
@@ -114,9 +99,8 @@ See the following link for more info on the management APIs: https://msdn.micros
 
 ### Running the collector:
 
-Running from the GUI should be self-explanatory. It can run once or on a schedule. Usually you will want to use the 
-command-line executable with a config file, and schedule it for periodic execution (e.g. through CRON, windows task
-scheduler, or a PRTG sensor).
+You can schedule to run the executable with CRON or Task Scheduler. Alternatively, you can use the "schedule" option in
+the YAML config to run the executable once and have it schedule itself (see ConfigExamples/schedule.yaml).
 
 To run the command-line executable use the following syntax:
 
