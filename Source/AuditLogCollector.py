@@ -1,5 +1,5 @@
 from Interfaces import AzureOMSInterface, SqlInterface, GraylogInterface, PRTGInterface, FileInterface, \
-    AzureTableInterface, AzureBlobInterface
+    AzureTableInterface, AzureBlobInterface, FluentdInterface
 import AuditLogSubscriber
 import ApiConnection
 import os
@@ -95,7 +95,8 @@ class AuditLogCollector(ApiConnection.ApiConnection):
 
         for interface in [FileInterface.FileInterface, AzureTableInterface.AzureTableInterface,
                           AzureBlobInterface.AzureBlobInterface, AzureOMSInterface.AzureOMSInterface,
-                          SqlInterface.SqlInterface, GraylogInterface.GraylogInterface, PRTGInterface.PRTGInterface]:
+                          SqlInterface.SqlInterface, GraylogInterface.GraylogInterface, PRTGInterface.PRTGInterface,
+                          FluentdInterface.FluentdInterface]:
             self.interfaces[interface] = interface(collector=self, **kwargs)
 
     @property
@@ -282,7 +283,7 @@ class AuditLogCollector(ApiConnection.ApiConnection):
             logging.log(level=logging.DEBUG, msg='Got {0} content blobs of type: "{1}"'.format(
                 len(self.blobs_to_collect[content_type]), content_type))
         except Exception as e:
-            logging.log(level=logging.DEBUG, msg="Error while getting available content: {}: {}".format(
+            logging.log(level=logging.WARN, msg="Error while getting available content: {}: {}".format(
                 content_type, e))
             self._remaining_content_types.remove(content_type)
         else:
@@ -598,8 +599,8 @@ if __name__ == "__main__":
 
     description = \
     """
-    Retrieve audit log contents from Office 365 API and save to file or Graylog.
-    Example: Retrieve all available content and send it to Graylog (using mock ID's and keys):
+    Retrieve audit log contents from Office 365 API and save to file or other output.
+    Example: Retrieve all available content and send it to an output (using mock ID's and keys):
     "AuditLogCollector.py 123 456 789 --general --exchange --azure_ad --sharepoint --dlp -g -gA 10.10.10.1 -gP 5000
     """
     parser = argparse.ArgumentParser(description=description)
