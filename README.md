@@ -1,5 +1,21 @@
 {% seo %}
 
+# Announcement:
+
+To hugely boost performance and add reliability the engine of the log collector has been rewritten in Rust. Consider downloading the newest
+executable to automatically use it. 
+
+If you run python code directly instead of using the executables, install the RustEngine wheel under
+the "RustEngineWheels" folder in this repo. To turn off the new engine (in case of issues or for whatever reason), use the following
+in your config.yaml:
+
+```
+collect:  
+  rustEngine: False
+```
+In my own tests the Rust engine has been at least 10x faster and stable. If you run into any problems, please use the
+above setting to revert to the old engine, and consider creating an issue here on Github so I can fix it.
+
 # Office365 audit log collector
 
 Collect/retrieve Office365, Azure and DLP audit logs, optionally filter them, then send them to one or more outputs 
