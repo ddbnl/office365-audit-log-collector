@@ -68,7 +68,7 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         self._prepare_to_run()
         logging.log(level=logging.INFO, msg='Starting run @ {}. Content: {}.'.format(
             datetime.datetime.now(), self.config['collect', 'contentTypes']))
-        if self.config['collect', 'rustEngine']:
+        if not self.config['collect', 'rustEngine'] is False:
             self._start_interfaces()
             self.receive_results_from_rust_engine()
             self._stop_interfaces(force=False)

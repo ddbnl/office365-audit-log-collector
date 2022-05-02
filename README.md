@@ -1,11 +1,12 @@
 # Anouncement:
 
-To improve performance the engine of the log collector has been rewritten in Rust. Consider downloading the newest
-executable and using the following setting in your config:
+To improve performance (10x) and reliability the engine of the log collector has been rewritten in Rust. Consider downloading the newest
+executable to automatically use it. To turn off the new engine (in case of issues or for whatever reason), use the following
+in your config.yaml:
 
 ```
 collect:  
-  rustEngine: True
+  rustEngine: False
 ```
 In my own tests the Rust engine has been at least 5x faster. The default is still Python so people can test the new engine first. If you run into any problems, please remove the
 setting to revert back to the old engine, and consider creating an issue here on Github so I can fix it.
