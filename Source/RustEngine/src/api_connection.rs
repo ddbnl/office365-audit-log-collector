@@ -25,8 +25,8 @@ pub fn get_api_connection(tenant_id: String, client_id: String, secret_key: Stri
     api.login();
     api
 }
-/// Abstraction of an API connection to Azure Management APIs. Can be used to login to the API and
-/// retrieve log content.
+/// Abstraction of an API connection to Azure Management APIs. Can be used to login to the API
+/// which sets the headers. These headers can then be used to make authenticated requests.
 pub struct ApiConnection {
     pub tenant_id: String,
     pub client_id: String,
@@ -61,7 +61,11 @@ impl ApiConnection {
 }
 
 
-/// Create a URL that can retrieve the first page of content for each passed content type.
+/// Create a URL that can retrieve the first page of content for each passed content type. Each
+/// content type can have multiple runs specified. A run consists of a start- and end date to
+/// retrieve data for. Max. time span is 24, so if the user wants to retrieve for e.g. 72 hours,
+/// we need 3 runs of 24 hours each. The runs object looks like e.g.:
+/// Runs{Audit.Exchange: [(start_date, end_date), (start_date, end_date), (start_date, end_date)}
 pub fn create_base_urls(
     content_types: Vec<String>, tenant_id: String, publisher_id: String,
     runs: HashMap<String, Vec<(String, String)>>) -> Vec<(String, String)> {
@@ -83,6 +87,11 @@ pub fn create_base_urls(
 }
 
 
+/// Get available content blobs to retrieve. A base URL receices the initial page of content blobs.
+/// The response header could specify 'NextPageUri', which if it exists specifies the URL for the
+/// next page of content. This is sent over the blobs_tx channel to retrieve as well. If no
+/// additional pages exist, a status message is sent to indicate all content blobs for this
+/// content type have been retrieved.
 #[tokio::main(flavor="multi_thread", worker_threads=200)]
 pub async fn get_content_blobs(config: GetBlobConfig, blobs_rx: Receiver<(String, String)>) {
     blobs_rx.for_each_concurrent(config.threads, |(content_type, url)| {
@@ -112,6 +121,9 @@ pub async fn get_content_blobs(config: GetBlobConfig, blobs_rx: Receiver<(String
 }
 
 
+/// Deal with the response of a successful content blob request. Try to decode into JSON to
+/// retrieve the content URIs of the content inside the blob. Also check response header for another
+/// page of content blobs.
 async fn handle_blob_response(
     resp: reqwest::Response, blobs_tx: Sender<(String, String)>,
     mut status_tx: Sender<StatusMessage>, content_tx: Sender<ContentToRetrieve>,
@@ -138,6 +150,7 @@ async fn handle_blob_response(
 }
 
 
+/// Determine if a content blob response header contains a reference to another page of blobs.
 async fn handle_blob_response_paging(
     resp: &reqwest::Response, mut blobs_tx: Sender<(String, String)>,
     mut status_tx: Sender<StatusMessage>, content_type: String) {
@@ -155,6 +168,9 @@ async fn handle_blob_response_paging(
     };
 }
 
+
+/// Deal with successfully received and decoded content blobs. Send the URIs of content to retrieve
+/// over the content_tx channel for the content thread to retrieve.
 async fn handle_blob_response_content_uris(
     mut status_tx: Sender<StatusMessage>, mut content_tx: Sender<ContentToRetrieve>,
     content_type: String, content_json: JsonList) {
@@ -185,6 +201,7 @@ async fn handle_blob_response_content_uris(
     };
 }
 
+/// Deal with error while requesting a content blob.
 async fn handle_blob_response_error(
         mut status_tx: Sender<StatusMessage>, mut blob_error_tx: Sender<(String, String)>,
         content_type: String, url: String) {
@@ -198,6 +215,8 @@ async fn handle_blob_response_error(
     }
 }
 
+
+/// Retrieve the actual ContentUris found in the JSON body of content blobs.
 #[tokio::main(flavor="multi_thread", worker_threads=200)]
 pub async fn get_content(config: GetContentConfig, content_rx: Receiver<ContentToRetrieve>) {
     content_rx.for_each_concurrent(config.threads, |content_to_retrieve| {
@@ -224,6 +243,7 @@ pub async fn get_content(config: GetContentConfig, content_rx: Receiver<ContentT
 }
 
 
+/// Deal with successful content request response.
 async fn handle_content_response(
     resp: reqwest::Response, result_tx: std::sync::mpsc::Sender<(String, ContentToRetrieve)>,
     mut status_tx: Sender<StatusMessage>, mut content_error_tx: Sender<ContentToRetrieve>,
@@ -247,6 +267,8 @@ async fn handle_content_response(
     }
 }
 
+
+/// Deal with error response requesting a contentURI.
 async fn handle_content_response_error(
     mut status_tx: Sender<StatusMessage>, mut content_error_tx: Sender<ContentToRetrieve>,
     content_to_retrieve: ContentToRetrieve) {

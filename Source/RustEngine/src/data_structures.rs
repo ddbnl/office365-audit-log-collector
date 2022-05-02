@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use reqwest::header::HeaderMap;
 use serde_derive::{Deserialize};
 
+/// List of JSON responses (used to represent content blobs)
 pub type JsonList = Vec<HashMap<String, serde_json::Value>>;
 
 
@@ -13,6 +14,10 @@ pub struct AuthResult {
     pub access_token: String,
 }
 
+
+/// Representation of content we need to retrieve. ID, expiration and content type are passed to
+/// python along with the retrieved content. ID an expiration are needed for avoiding known logs,
+/// content type for categorization in outputs.
 pub struct ContentToRetrieve {
     pub content_type: String,
     pub content_id: String,
@@ -69,13 +74,13 @@ pub struct MessageLoopConfig {
 }
 
 
+/// These stats are passed back to python after a run has finished to show to end-user.
 pub struct RunStatistics {
     pub blobs_found: usize,
     pub blobs_successful: usize,
     pub blobs_error: usize,
     pub blobs_retried: usize,
 }
-
 impl RunStatistics {
     pub fn new() -> RunStatistics {
         RunStatistics {

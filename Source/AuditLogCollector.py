@@ -98,7 +98,7 @@ class AuditLogCollector(ApiConnection.ApiConnection):
                     break
                 last_received = now
             except EOFError:  # RustEngine throws this error when all content has been retrieved
-                print("Finished run")
+                logging.info("Rust engine finished receiving all content")
                 break
             else:
                 content_json, content_id, content_expiration, content_type = result
