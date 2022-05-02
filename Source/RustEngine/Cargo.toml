@@ -1,0 +1,30 @@
+[package]
+name = "alc"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+# The name of the native library. This is the name which will be used in Python to import the
+# library (i.e. `import string_sum`). If you change this, you must also change the name of the
+# `#[pymodule]` in `src/lib.rs`.
+name = "alc"
+# "cdylib" is necessary to produce a shared library for Python to import from.
+#
+# Downstream Rust code (including code in `bin/`, `examples/`, and `tests/`) will not be able
+# to `use string_sum;` unless the "rlib" or "lib" crate type is also included, e.g.:
+# crate-type = ["cdylib", "rlib"]
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.16.4", features = ["extension-module"] }
+log = "0.4.16"
+simple_logger = "2.1.0"
+chrono = "0.4.19"
+futures = "0.3.21"
+reqwest = {version = "0.11.10", features = ["blocking", "json"]}
+tokio = {version="1.17.0", features=["full"]}
+tokio-stream = "0.1.8"
+serde="1.0.136"
+serde_yaml = "0.8.23"
+serde_json="1.0.79"
+serde_derive = "1.0.136"

@@ -8,6 +8,7 @@ collect:  # Settings determining which audit logs to collect and how to do it
     Audit.Exchange: True
     Audit.SharePoint: True
     DLP.All: True
+  rustEngine: True  # Use False to revert to the old Python engine. If running from python instead of executable, make sure to install the python wheel in the RustEngineWheels folder
   schedule: 0 1 0  # How often to run in days/hours/minutes. Delete this line to just run once and exit.
   maxThreads: 50  # Maximum number of simultaneous threads retrieving logs
   retries: 3  # Times to retry retrieving a content blob if it fails
