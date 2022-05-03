@@ -15,7 +15,7 @@ collect:  # Settings determining which audit logs to collect and how to do it
   retryCooldown: 3  # Seconds to wait before retrying retrieving a content blob
   autoSubscribe: True  # Automatically subscribe to collected content types. Never unsubscribes from anything.
   skipKnownLogs: True  # Remember retrieved log ID's, don't collect them twice
-  resume: True  # Remember last run time, resume collecting from there next run
+  resume: False  # Remember last run time, resume collecting from there next run
   hoursToCollect: 24  # Look back this many hours for audit logs (can be overwritten by resume)
 filter:  # Only logs that match ALL filters for a content type are collected. Leave empty to collect all
   Audit.General:
