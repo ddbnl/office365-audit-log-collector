@@ -1,18 +1,16 @@
-# Announcement:
+# Anouncements:
 
-To hugely boost performance and add reliability the engine of the log collector has been rewritten in Rust. Consider downloading the newest
-executable to automatically use it. 
+- I was asked to write an article for the Graylog community, giving a more detailed look at how to use
+this tool. If this might be useful to you, you can find it 
+[here](https://community.graylog.org/t/collecting-office365-azuread-audit-logs-using-office-audit-collector/23925).
 
-If you run python code directly instead of using the executables, install the RustEngine wheel under
-the "RustEngineWheels" folder in this repo. To turn off the new engine (in case of issues or for whatever reason), use the following
-in your config.yaml:
-
-```
-collect:  
-  rustEngine: False
-```
-In my own tests the Rust engine has been at least 10x faster and stable. If you run into any problems, please use the
-above setting to revert to the old engine, and consider creating an issue here on Github so I can fix it.
+- Also, shoutout to [Jetbrains](https://www.jetbrains.com/all/) 
+for sponsoring an all product license for their IDEs for this open source
+project. Much appreciated.
+- The 'resume' parameter has been deprecated. Sometimes logs are published to the API with a delay
+and this causes issues with the 'resume' parameter. In hindsight this parameter was a mistake. It now
+generates a warning when used, but in the future it will be removed. If you are using it, please consider
+setting it to 'false'. If you were using it to prevent duplicate logs, set 'skipKnownLogs' to true instead.
 
 # Office365 audit log collector
 
@@ -38,17 +36,7 @@ If you have any issues or questions, or requests for additional interfaces, feel
   - CSV Local file
   - Power BI (indirectly through SQL, CSV, Azure Tables or Azure Blob)
 
-Simply download the executable you need from the Windows or Linux folder and copy a config file from the ConfigExamples
-folder that suits your need. Find onboarding instructions and more detailed instructions for using the executables below.
-
-For a full audit trail, schedule to run the collector on a regular basis (preferably at least once every day). Previously
-retrieved logs can be remembered to prevent duplicates. Consider using the following parameters in the config file for a robust audit trail:
-- skipKnownLogs: True (prevent duplicates)
-- hoursToCollect: 24 (or a number larger than the amount of hours between runs, for safety overlap)
-- resume: False (don't resume where the last run stopped, have some overlap in case anything was missed for any reason)
-See below for a more detailed instruction of the config file.
-
-Lastly, feel free to contribute other outputs if you happen to build any. Also open to any other useful pull requests!
+Feel free to contribute other outputs if you happen to build any. Also open to any other useful pull requests!
 See the following link for more info on the management APIs: https://msdn.microsoft.com/en-us/office-365/office-365-management-activity-api-reference.
 
 ## Use cases:
@@ -60,11 +48,8 @@ See the following link for more info on the management APIs: https://msdn.micros
 - Output to (Azure) SQL / CSV for Power BI
 - Etc.
 
-## Roadmap:
-
-- Rewrite the collector in Rust. Prototype is finished and runs 5x faster already.
-
 ## Latest changes:
+- Deprecated 'resume' parameter.
 - Added native timestamp field to logs for graylog output
 - Added fluentd support (thanks @owentl)
 - Added Azure Blob and Azure Table outputs
