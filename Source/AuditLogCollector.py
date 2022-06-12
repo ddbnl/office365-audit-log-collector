@@ -56,6 +56,13 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         sys.exit(0)
 
     def run(self):
+
+        if self.config['collect', 'resume']:
+            logging.warning(
+                "WARNING: The 'resume' parameter is deprecated; it will be removed in a future version. It is known to "
+                "cause issues, since logs sometimes experience delay in being published to the APIs. It is recommended "
+                "to set 'resume' to false in your config. If you used 'resume' to prevent duplicate logs, set "
+                "'skipKnownLogs' to true instead.")
         if not self.config['collect', 'schedule']:
             self.run_once()
         else:
@@ -514,7 +521,7 @@ class AuditLogCollector(ApiConnection.ApiConnection):
                     del known_content[content_id]
         if not known_content:
             return
-        with open('known_logs', 'w') as ofile:
+        with open('known_content', 'w') as ofile:
             for content_id, expire_date in known_content.items():
                 ofile.write("{},{}\n".format(content_id, expire_date))
 
@@ -547,7 +554,7 @@ class AuditLogCollector(ApiConnection.ApiConnection):
                     if not line.strip():
                         continue
                     try:
-                        self._known_content[line.split(',')[0].strip()] = line.split(',')[1]
+                        self._known_content[line.split(',')[0].strip()] = line.split(',')[1].strip()
                     except:
                         continue
         return self._known_content

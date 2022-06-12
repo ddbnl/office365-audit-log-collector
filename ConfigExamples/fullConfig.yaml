@@ -9,20 +9,20 @@ collect:  # Settings determining which audit logs to collect and how to do it
     Audit.SharePoint: True
     DLP.All: True
   rustEngine: True  # Use False to revert to the old Python engine. If running from python instead of executable, make sure to install the python wheel in the RustEngineWheels folder
-  schedule: 0 1 0  # How often to run in days/hours/minutes. Delete this line to just run once and exit.
+# schedule: 0 1 0  # How often to run in days/hours/minutes. Program will never exit and run on the schedule. Uncomment to use.
   maxThreads: 50  # Maximum number of simultaneous threads retrieving logs
   retries: 3  # Times to retry retrieving a content blob if it fails
   retryCooldown: 3  # Seconds to wait before retrying retrieving a content blob
   autoSubscribe: True  # Automatically subscribe to collected content types. Never unsubscribes from anything.
   skipKnownLogs: True  # Remember retrieved log ID's, don't collect them twice
-  resume: False  # Remember last run time, resume collecting from there next run
+  resume: False  # DEPRECATED, recommended to keep 'false'. Remember last run time, resume collecting from there next run
   hoursToCollect: 24  # Look back this many hours for audit logs (can be overwritten by resume)
-filter:  # Only logs that match ALL filters for a content type are collected. Leave empty to collect all
-  Audit.General:
-  Audit.AzureActiveDirectory:
-  Audit.Exchange:
-  Audit.SharePoint:
-  DLP.All:
+  filter:  # Only logs that match ALL filters for a content type are collected. Leave empty to collect all
+    Audit.General:
+    Audit.AzureActiveDirectory:
+    Audit.Exchange:
+    Audit.SharePoint:
+    DLP.All:
 output:
   file:  # CSV output
     enabled: False

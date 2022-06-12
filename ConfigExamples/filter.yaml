@@ -3,12 +3,12 @@ collect:
     Audit.General: True
     Audit.AzureActiveDirectory: True
     Audit.SharePoint: True
-# Collect logs concerning spoofing prevention in Audit.General, deleted files from Audit.SharePoint
-# and login failures from Audit.AzureActiveDirectory
-filter:
-  Audit.General:
-    Policy: Spoof
-  Audit.AzureActiveDirectory:
-    Operation: UserLoginFailed
-  Audit.SharePoint:
-    Operation: FileDeleted
+  # Collect logs concerning spoofing prevention in Audit.General, deleted files from Audit.SharePoint
+  # and login failures from Audit.AzureActiveDirectory
+  filter:
+    Audit.General:
+      Policy: Spoof
+    Audit.AzureActiveDirectory:
+      Operation: UserLoginFailed
+    Audit.SharePoint:
+      Operation: FileDeleted
