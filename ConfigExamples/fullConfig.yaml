@@ -8,9 +8,10 @@ collect:  # Settings determining which audit logs to collect and how to do it
     Audit.Exchange: True
     Audit.SharePoint: True
     DLP.All: True
-  rustEngine: True  # Use False to revert to the old Python engine. If running from python instead of executable, make sure to install the python wheel in the RustEngineWheels folder
+  rustEngine: True  # Use False to revert to the old Python engine. If running from python instead of executable, make sure to install the Rust enginej python wheel in the RustEngineWheels folder
 # schedule: 0 1 0  # How often to run in days/hours/minutes. Program will never exit and run on the schedule. Uncomment to use.
   maxThreads: 50  # Maximum number of simultaneous threads retrieving logs
+  globalTimeout: 0  # Number of minutes before the process is forced to exit if still running (0 = no timeout). If you run e.g. every hour you could set this to 59, ensuring there will only be 1 active process.
   retries: 3  # Times to retry retrieving a content blob if it fails
   retryCooldown: 3  # Seconds to wait before retrying retrieving a content blob
   autoSubscribe: True  # Automatically subscribe to collected content types. Never unsubscribes from anything.

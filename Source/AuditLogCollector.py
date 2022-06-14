@@ -80,6 +80,11 @@ class AuditLogCollector(ApiConnection.ApiConnection):
             self.receive_results_from_rust_engine()
             self._stop_interfaces(force=False)
         else:
+            logging.warning(
+                "WARNING: The Python engine is deprecated; it will be removed in a future version as it has been "
+                "replaced by the Rust engine. Consider removing the 'rustEngine: False' line in your config. If you "
+                "are experiencing issues with the Rust engine, please consider creating an issue on the GitHub repo so "
+                "it can be fixed (https://github.com/ddbnl/office365-audit-log-collector/issues)")
             self._start_monitoring()
             self._get_all_available_content()
             while self.monitor_thread.is_alive():
@@ -95,8 +100,12 @@ class AuditLogCollector(ApiConnection.ApiConnection):
                                 self.config['collect', 'retries'] or 3)
         engine.run_once()
         last_received = datetime.datetime.now()
+        timeout = self.config['collect', 'globalTimeout']
         while True:
             try:
+                if timeout and datetime.datetime.now() - self.run_started >= datetime.timedelta(minutes=timeout):
+                    logging.error("Global timeout reached, killing process.")
+                    sys.exit(-1)
                 result = engine.get_result()
             except ValueError:  # RustEngine throws this error when no logs are in the results recv queue
                 now = datetime.datetime.now()
