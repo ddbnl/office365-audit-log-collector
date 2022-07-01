@@ -48,6 +48,10 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         self.errors_retrieving = 0
         self.retries = 0
 
+        self.working_dir = self.config['collect', 'workingDir'] or "./"
+        if not os.path.exists(self.working_dir):
+            os.makedirs(self.working_dir, exist_ok=True)
+
     def force_stop(self, *args):
 
         self._force_stop = True
@@ -198,7 +202,7 @@ class AuditLogCollector(ApiConnection.ApiConnection):
             self._add_known_log()
             self._add_known_content()
         if self.config['collect', 'resume'] and self._last_run_times:
-            with open('last_run_times', 'w') as ofile:
+            with open(os.path.join(self.working_dir, 'last_run_times'), 'w') as ofile:
                 json.dump(fp=ofile, obj=self._last_run_times)
         self._log_statistics()
 
@@ -216,9 +220,9 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         """
         Load last_run_times file and interpret the datetime for each content type.
         """
-        if os.path.exists('last_run_times'):
+        if os.path.exists(os.path.join(self.working_dir, 'last_run_times')):
             try:
-                with open('last_run_times', 'r') as ofile:
+                with open(os.path.join(self.working_dir, 'last_run_times'), 'r') as ofile:
                     self._last_run_times = json.load(ofile)
             except Exception as e:
                 logging.error("Could not read last run times file: {}.".format(e))
@@ -476,7 +480,7 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         Add a content ID to the known content file to avoid saving messages more than once.
         :return:
         """
-        with open('known_logs', 'w') as ofile:
+        with open(os.path.join(self.working_dir, 'known_logs'), 'w') as ofile:
             for log_id, creation_time in self.known_logs.items():
                 ofile.write('{},{}\n'.format(log_id, creation_time))
 
@@ -485,7 +489,7 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         Add a content ID to the known content file to avoid saving messages more than once.
         :return:
         """
-        with open('known_content', 'w') as ofile:
+        with open(os.path.join(self.working_dir, 'known_content'), 'w') as ofile:
             for content_id, content_expiration in self.known_content.items():
                 ofile.write('{0},{1}\n'.format(content_id, content_expiration))
 
@@ -495,8 +499,8 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         download.
         """
         known_logs = self.known_logs
-        if os.path.exists('known_logs'):
-            os.remove('known_logs')
+        if os.path.exists(os.path.join(self.working_dir, 'known_logs')):
+            os.remove(os.path.join(self.working_dir, 'known_logs'))
             for log_id, creation_time in known_logs.copy().items():
                 try:
                     date = datetime.datetime.strptime(creation_time.strip()+'Z', "%Y-%m-%dT%H:%M:%S%z")
@@ -508,7 +512,7 @@ class AuditLogCollector(ApiConnection.ApiConnection):
                     del self.known_logs[log_id]
         if not known_logs:
             return
-        with open('known_logs', mode='w') as ofile:
+        with open(os.path.join(self.working_dir, 'known_logs'), mode='w') as ofile:
             for log_id, creation_time in known_logs.items():
                 ofile.write("{},{}\n".format(log_id, creation_time.strip()))
 
@@ -518,8 +522,8 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         download.
         """
         known_content = self.known_content
-        if os.path.exists('known_content'):
-            os.remove('known_content')
+        if os.path.exists(os.path.join(self.working_dir, 'known_content')):
+            os.remove(os.path.join(self.working_dir, 'known_content'))
             for content_id, expire_date in known_content.copy().items():
                 try:
                     date = datetime.datetime.strptime(expire_date, "%Y-%m-%dT%H:%M:%S.%f%z")
@@ -530,7 +534,7 @@ class AuditLogCollector(ApiConnection.ApiConnection):
                     del known_content[content_id]
         if not known_content:
             return
-        with open('known_content', 'w') as ofile:
+        with open(os.path.join(self.working_dir, 'known_content'), 'w') as ofile:
             for content_id, expire_date in known_content.items():
                 ofile.write("{},{}\n".format(content_id, expire_date))
 
@@ -540,8 +544,8 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         Parse and return known content file.
         :return: {content_id: content_expiration_date} dict
         """
-        if not self._known_logs and os.path.exists('known_logs'):
-            with open('known_logs', 'r') as ofile:
+        if not self._known_logs and os.path.exists(os.path.join(self.working_dir, 'known_logs')):
+            with open(os.path.join(self.working_dir, 'known_logs'), 'r') as ofile:
                 for line in ofile.readlines():
                     if not line.strip():
                         continue
@@ -557,8 +561,8 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         Parse and return known content file.
         :return: {content_id: content_expiration_date} dict
         """
-        if not self._known_content and os.path.exists('known_content'):
-            with open('known_content', 'r') as ofile:
+        if not self._known_content and os.path.exists(os.path.join(self.working_dir, 'known_content')):
+            with open(os.path.join(self.working_dir, 'known_content'), 'r') as ofile:
                 for line in ofile.readlines():
                     if not line.strip():
                         continue

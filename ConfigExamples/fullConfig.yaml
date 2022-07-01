@@ -2,6 +2,7 @@ log:  # Log settings. Debug will severely decrease performance
   path: 'collector.log'
   debug: False
 collect:  # Settings determining which audit logs to collect and how to do it
+  workingDir: ./ # Directory to save cache files in (known_logs, known_content, last_run). Default is dir where executable is located
   contentTypes:
     Audit.General: True
     Audit.AzureActiveDirectory: True
