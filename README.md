@@ -113,7 +113,8 @@ docker run \
    -e TENANT_ID=***REMOVED*** \
    -e CLIENT_KEY=***REMOVED*** \ 
    -e SECRET_KEY=***REMOVED*** \
-   -v ${PWD}/ConfigExamples/fluentd.yaml:/app/config.yaml oac
+   -v ${PWD}/ConfigExamples/fluentd.yaml:/app/config.yaml \
+   ghcr.io/ddbnl/office365-audit-log-collector:latest 
 ```
 To create a config file you can start with the 'fullConfig.yaml' from the ConfigExamples folder. This has all the 
 possible options and some explanatory comments. Cross-reference with a config example using the output(s) of your choice, and you
