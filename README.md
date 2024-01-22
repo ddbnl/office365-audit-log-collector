@@ -107,6 +107,14 @@ To run the command-line executable use the following syntax:
 
 OfficeAuditLogCollector(.exe) %tenant_id% %client_key% %secret_key% --config %path/to/config.yaml%
 
+To run the Docker Image use the following syntax:
+```bash
+docker run \
+   -e TENANT_ID=***REMOVED*** \
+   -e CLIENT_KEY=***REMOVED*** \ 
+   -e SECRET_KEY=***REMOVED*** \
+   -v ${PWD}/ConfigExamples/fluentd.yaml:/app/config.yaml oac
+```
 To create a config file you can start with the 'fullConfig.yaml' from the ConfigExamples folder. This has all the 
 possible options and some explanatory comments. Cross-reference with a config example using the output(s) of your choice, and you
 should be set.
