@@ -1,3 +1,4 @@
+#!/bin/bash
 if [[ -z "${TENANT_ID}" ]]; then
   echo "The Tendant ID is undefined, please specify using the Environment Variable TENANT_ID"
   exit 1
