@@ -11,6 +11,7 @@ use crate::config::{Config, ContentTypesSubConfig};
 use crate::data_structures::{Caches, CliArgs};
 use crate::interface::Interface;
 use crate::interfaces::file_interface::FileInterface;
+use crate::interfaces::fluentd_interface::FluentdInterface;
 
 
 /// # Rust Engine
@@ -35,6 +36,9 @@ impl Collector {
         let mut interfaces: Vec<Box<dyn Interface>> = Vec::new();
         if config.output.file.is_some() {
             interfaces.push(Box::new(FileInterface::new(config.clone())));
+        }
+        if config.output.fluentd.is_some() {
+            interfaces.push(Box::new(FluentdInterface::new(config.clone())));
         }
         Collector {
             args,

@@ -9,5 +9,5 @@ output:
   fluentd:
     enabled: True
     tenantName: MyTenant
-    address: fluentd
+    address: localhost
     port: 24224

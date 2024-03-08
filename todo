@@ -1,17 +1,12 @@
-get rid of unwraps
-make config optional with interactive subscribe
-fix requirements
-    - add all to pip
-    - only import when needed
 
 make build containers
 
+filter
+global timeout
+subscribe
 
+graylog interface
+sql interface
 
-cache to global var, prevent memory leak
-
-csv prepending characters
-    - reproduce
-    - fix
-
-when python exits kill rust engine
+get rid of unwraps
+tidy up
