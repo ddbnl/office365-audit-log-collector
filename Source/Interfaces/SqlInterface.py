@@ -11,6 +11,8 @@ import pandas
 
 class SqlInterface(_Interface.Interface):
 
+    interface_name = 'sql'
+
     def __init__(self, sql_connection_string, **kwargs):
         """
         Interface to send logs to an SQL database. Caches logs in memory until the cache size is hit, then writes them
@@ -27,7 +29,7 @@ class SqlInterface(_Interface.Interface):
     @property
     def enabled(self):
 
-        return self.collector.config['output', 'sql', 'enabled']
+        return self.collector.config['output', self.interface_name, 'enabled']
 
     @property
     def engine(self):
@@ -156,7 +158,7 @@ class SqlInterface(_Interface.Interface):
         df = df.loc[:, ~df.columns.duplicated()]  # Remove any duplicate columns
         df = self._deduplicate_columns(df=df)
         df.to_sql(name=table_name, con=engine, index=False, if_exists='replace',
-                  chunksize=int((self.collector.config['output', 'sql', 'chunkSize'] or 2000) / len(df.columns)),
+                  chunksize=int((self.collector.config['output', self.interface_name, 'chunkSize'] or 2000) / len(df.columns)),
                   method='multi')
 
     def _send_message(self, msg, content_type, **kwargs):
@@ -166,7 +168,7 @@ class SqlInterface(_Interface.Interface):
         :param content_type: str
         """
         self.results_cache[content_type].append(msg)
-        if self.total_cache_length >= (self.collector.config['output', 'sql', 'cacheSize'] or 500000):
+        if self.total_cache_length >= (self.collector.config['output', self.interface_name, 'cacheSize'] or 500000):
             self._wait_threads()
             self._threads.clear()
             self._process_caches()
@@ -212,7 +214,7 @@ class SqlInterface(_Interface.Interface):
                     df = self._deduplicate_columns(df=df)
                     df.to_sql(
                         name=table_name, con=engine, index=False, if_exists='append',
-                        chunksize=int((self.collector.config['output', 'sql', 'chunkSize'] or 2000) / len(df.columns)),
+                        chunksize=int((self.collector.config['output', self.interface_name, 'chunkSize'] or 2000) / len(df.columns)),
                         method='multi')
             except Exception as e:
                 self.unsuccessfully_sent += len(df)

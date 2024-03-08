@@ -14,6 +14,8 @@ import datetime
 
 class AzureOMSInterface(_Interface.Interface):
 
+    interface_name = 'azureLogAnalytics'
+
     def __init__(self, **kwargs):
         """
         Interface to send logs to an Azure Log Analytics Workspace.
@@ -30,7 +32,7 @@ class AzureOMSInterface(_Interface.Interface):
     @property
     def enabled(self):
 
-        return self.collector.config['output', 'azureLogAnalytics', 'enabled']
+        return self.collector.config['output', self.interface_name, 'enabled']
 
     def monitor_queue(self):
         """

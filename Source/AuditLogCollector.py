@@ -36,7 +36,6 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         self._last_run_times = {}
         self._known_content = {}
         self._known_logs = {}
-        self._force_stop = False
 
         self._remaining_content_types = collections.deque()
         self.blobs_to_collect = collections.defaultdict(collections.deque)
@@ -54,19 +53,12 @@ class AuditLogCollector(ApiConnection.ApiConnection):
 
     def force_stop(self, *args):
 
-        self._force_stop = True
         logging.info("Got a SIGINT, stopping..")
         self.monitor_thread.join(timeout=10)
         sys.exit(0)
 
     def run(self):
 
-        if self.config['collect', 'resume']:
-            logging.warning(
-                "WARNING: The 'resume' parameter is deprecated; it will be removed in a future version. It is known to "
-                "cause issues, since logs sometimes experience delay in being published to the APIs. It is recommended "
-                "to set 'resume' to false in your config. If you used 'resume' to prevent duplicate logs, set "
-                "'skipKnownLogs' to true instead.")
         if not self.config['collect', 'schedule']:
             self.run_once()
         else:
@@ -83,16 +75,6 @@ class AuditLogCollector(ApiConnection.ApiConnection):
             self._start_interfaces()
             self.receive_results_from_rust_engine()
             self._stop_interfaces(force=False)
-        else:
-            logging.warning(
-                "WARNING: The Python engine is deprecated; it will be removed in a future version as it has been "
-                "replaced by the Rust engine. Consider removing the 'rustEngine: False' line in your config. If you "
-                "are experiencing issues with the Rust engine, please consider creating an issue on the GitHub repo so "
-                "it can be fixed (https://github.com/ddbnl/office365-audit-log-collector/issues)")
-            self._start_monitoring()
-            self._get_all_available_content()
-            while self.monitor_thread.is_alive():
-                self.monitor_thread.join(1)
         self._finish_run()
 
     def receive_results_from_rust_engine(self):
@@ -253,13 +235,6 @@ class AuditLogCollector(ApiConnection.ApiConnection):
         """
         return not bool(self._remaining_content_types)
 
-    def _start_monitoring(self):
-        """
-        Start a thread monitoring the list containing blobs that need collecting.
-        """
-        self.monitor_thread = threading.Thread(target=self._monitor_blobs_to_collect, daemon=True)
-        self.monitor_thread.start()
-
     def _auto_subscribe(self):
         """
         Subscribe to all content types that are set to be retrieved.
@@ -315,50 +290,6 @@ class AuditLogCollector(ApiConnection.ApiConnection):
             self._last_run_times[content_type] = end_time.strftime("%Y-%m-%dT%H:%M:%SZ")
         return runs
 
-    def _get_all_available_content(self):
-        """
-        Start a thread to retrieve available content blobs for each content type to be collected.
-        """
-        runs = self._get_needed_runs(content_types=self._remaining_content_types.copy())
-        for content_type, run_dates in runs.items():
-            for run_date in run_dates:
-                start_time, end_time = run_date
-                self._start_get_available_content_thread(
-                    content_type=content_type, start_time=start_time, end_time=end_time)
-
-    def _start_get_available_content_thread(self, content_type, start_time, end_time):
-
-        self.retrieve_available_content_threads.append(threading.Thread(
-            target=self._get_available_content, daemon=True,
-            kwargs={'content_type': content_type, 'start_time': start_time, 'end_time': end_time}))
-        self.retrieve_available_content_threads[-1].start()
-
-    def _get_available_content(self, content_type, start_time, end_time):
-        """
-        Retrieve available content blobs for a content type. If the response contains a
-        'NextPageUri' there is more content to be retrieved; rerun until all has been retrieved.
-        """
-        try:
-            logging.log(level=logging.DEBUG, msg='Getting available content for type: "{}"'.format(content_type))
-            logging.info("Retrieving {}. Start time: {}. End time: {}.".format(
-                content_type, start_time, end_time))
-            response = self.make_api_request(url='subscriptions/content?contentType={0}&startTime={1}&endTime={2}'.
-                                                 format(content_type, start_time, end_time))
-            self.blobs_to_collect[content_type] += response.json()
-            while 'NextPageUri' in response.headers.keys() and response.headers['NextPageUri']:
-                logging.log(level=logging.DEBUG, msg='Getting next page of content for type: "{0}"'.
-                            format(content_type))
-                self.blobs_to_collect[content_type] += response.json()
-                response = self.make_api_request(url=response.headers['NextPageUri'], append_url=False)
-            logging.log(level=logging.DEBUG, msg='Got {0} content blobs of type: "{1}"'.format(
-                len(self.blobs_to_collect[content_type]), content_type))
-        except Exception as e:
-            logging.log(level=logging.WARN, msg="Error while getting available content: {}: {}".format(
-                content_type, e))
-            self._remaining_content_types.remove(content_type)
-        else:
-            self._remaining_content_types.remove(content_type)
-
     def _start_interfaces(self):
 
         for interface in self._all_enabled_interfaces:
@@ -368,70 +299,6 @@ class AuditLogCollector(ApiConnection.ApiConnection):
 
         for interface in self._all_enabled_interfaces:
             interface.stop(gracefully=not force)
-
-    def _monitor_blobs_to_collect(self):
-        """
-        Wait for the 'retrieve_available_content' function to retrieve content URI's. Once they become available
-        start retrieving in a background thread.
-        """
-        self._start_interfaces()
-        threads = collections.deque()
-        while True:
-            threads = [thread for thread in threads if thread.is_alive()]
-            if self._force_stop or \
-                    (self._done_collecting_available_content and self._done_retrieving_content and not threads):
-                break
-            for content_type, blobs_to_collect in self.blobs_to_collect.copy().items():
-                if len(threads) >= (self.config['collect', 'maxThreads'] or 50):
-                    break
-                if self.blobs_to_collect[content_type]:
-                    blob_json = self.blobs_to_collect[content_type].popleft()
-                    self._collect_blob(blob_json=blob_json, content_type=content_type, threads=threads)
-        self._stop_interfaces(force=self._force_stop)
-
-    def _collect_blob(self, blob_json, content_type, threads):
-        """
-        Collect a single content blob in a thread.
-        :param blob_json: JSON
-        :param content_type: str
-        :param threads: list
-        """
-        if blob_json and 'contentUri' in blob_json:
-            logging.log(level=logging.DEBUG, msg='Retrieving content blob: "{0}"'.format(blob_json))
-            threads.append(threading.Thread(
-                target=self._retrieve_content, daemon=True,
-                kwargs={'content_json': blob_json, 'content_type': content_type,
-                        'retries': self.config['collect', 'retries'] or 3}))
-            threads[-1].start()
-
-    def _retrieve_content(self, content_json, content_type, retries):
-        """
-        Get an available content blob. If it exists in the list of known content blobs it is skipped to ensure
-        idempotence.
-        :param content_json: JSON dict of the content blob as retrieved from the API (dict)
-        :param content_type: Type of API being retrieved for, e.g. 'Audit.Exchange' (str)
-        :param retries: Times to retry retrieving a content blob if it fails (int)
-        """
-        if self.config['collect', 'skipKnownLogs'] and self.known_content and \
-                content_json['contentId'] in self.known_content:
-            return
-        try:
-            results = self.make_api_request(url=content_json['contentUri'], append_url=False).json()
-            if not results:
-                return
-        except Exception as e:
-            if retries:
-                self.retries += 1
-                time.sleep(self.config['collect', 'retryCooldown'] or 3)
-                return self._retrieve_content(content_json=content_json, content_type=content_type, retries=retries - 1)
-            else:
-                self.errors_retrieving += 1
-                logging.error("Error retrieving content: {}".format(e))
-                return
-        else:
-            self._handle_retrieved_content(
-                content_id=content_json['contentId'], content_expiration=content_json['contentExpiration'],
-                content_type=content_type, results=results)
 
     def _handle_retrieved_content(self, content_id, content_expiration, content_type, results):
         """
@@ -575,72 +442,6 @@ class AuditLogCollector(ApiConnection.ApiConnection):
 
 class Config(object):
 
-    def __init__(self, path=None, config=None):
-        """
-        Wrapper around the YAML config necessary to run the collector.
-        :param path: str
-        :param config: loaded YAML
-        """
-        self._config = config
-        self.path = path
-        self.requires_parsing = {  # Any settings that require additional parsing go here, with their parsing func
-            ('collect', 'contentTypes'): self.parse_content_types,
-            ('collect', 'schedule'): self.parse_schedule
-        }
-        self._cache = {}
-
-    @property
-    def config(self):
-
-        if not self._config:
-            self.load_config()
-        return self._config
-
-    def load_config(self, path=None):
-        """
-        Load a YML config containing settings for this collector and its' interfaces.
-        :param path: str
-        """
-        self._cache.clear()
-        path = path or self.path
-        with open(path, 'r') as ofile:
-            self._config = yaml.safe_load(ofile)
-
-    def __getitem__(self, item):
-        """
-        Allow searching config settings by e.g. config['Setting1', 'Subsetting2'].
-        :param item:
-        :return:
-        """
-        if item not in self._cache:
-            if item in self.requires_parsing:
-                self._cache[item] = self.requires_parsing[item]()
-            else:
-                self._cache[item] = self._find_setting(*item)
-        return self._cache[item]
-
-    def _find_setting(self, *setting):
-        """
-        Try to find a setting in a passed settings path (e.g. 'Main, Setting1, SubSetting1'). Return None if it does not
-        exist (allows using config files without all settings defined).
-        :param setting: tuple of settings path
-        :return: setting in YAML config (int/str/bool)
-        """
-        root = self.config
-        for child in setting:
-            if child in root:
-                root = root[child]
-            else:
-                return
-        return root
-
-    @property
-    def all_content_types(self):
-        """
-        :return: list of str
-        """
-        return ['Audit.General', 'Audit.AzureActiveDirectory', 'Audit.Exchange', 'Audit.SharePoint', 'DLP.All']
-
     def parse_schedule(self):
         """
         :return: tuple of ints (days/hours/minutes)
@@ -658,15 +459,7 @@ class Config(object):
         else:
             return schedule
 
-    def parse_content_types(self):
-        """
-        :return: list of str
-        """
-        content_types = collections.deque()
-        for content_type in self.all_content_types:
-            if self._find_setting('collect', 'contentTypes', content_type):
-                content_types.append(content_type)
-        return content_types
+
 
 
 if __name__ == "__main__":

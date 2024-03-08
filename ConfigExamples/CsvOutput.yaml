@@ -1,4 +1,5 @@
 collect:
+  skipKnownLogs: True
   contentTypes:
     Audit.General: True
     Audit.AzureActiveDirectory: True
@@ -7,7 +8,6 @@ collect:
     DLP.All: True
 output:
   file:
-    enabled: True
-    path: 'output'
+    path: 'output.csv'
     separateByContentType: True
     separator: ';'

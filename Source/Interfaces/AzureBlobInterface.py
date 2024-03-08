@@ -5,6 +5,8 @@ import os
 
 class AzureBlobInterface(FileInterface.FileInterface):
 
+    interface_name = 'azureBlob'
+
     def __init__(self, blob_connection_string=None, **kwargs):
         """
         Interface to send logs to CSV file(s). Not every audit log has every possible column, so columns in the CSV
@@ -19,7 +21,7 @@ class AzureBlobInterface(FileInterface.FileInterface):
     @property
     def enabled(self):
 
-        return self.collector.config['output', 'azureBlob', 'enabled']
+        return self.collector.config['output', self.interface_name, 'enabled']
 
     @property
     def separate_by_content(self):

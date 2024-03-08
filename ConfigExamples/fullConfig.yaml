@@ -9,8 +9,7 @@ collect:  # Settings determining which audit logs to collect and how to do it
     Audit.Exchange: True
     Audit.SharePoint: True
     DLP.All: True
-  rustEngine: True  # Use False to revert to the old Python engine. If running from python instead of executable, make sure to install the Rust enginej python wheel in the RustEngineWheels folder
-# schedule: 0 1 0  # How often to run in days/hours/minutes. Program will never exit and run on the schedule. Uncomment to use.
+  cacheSize: 500000  # Amount of logs to cache/batch until outputting, larger=faster but eats more memory
   maxThreads: 50  # Maximum number of simultaneous threads retrieving logs
   globalTimeout: 0  # Number of minutes before the process is forced to exit if still running (0 = no timeout). If you run e.g. every hour you could set this to 59, ensuring there will only be 1 active process.
   retries: 3  # Times to retry retrieving a content blob if it fails
@@ -31,7 +30,6 @@ output:
     separateByContentType: True  # Creates a separate CSV file for each content type, using file name from 'path' as a prefix
     path: 'output.csv'
     separator: ';'
-    cacheSize: 500000  # Amount of logs to cache until each CSV commit, larger=faster but eats more memory
   azureLogAnalytics:
     enabled: False
     workspaceId:

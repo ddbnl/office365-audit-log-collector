@@ -8,10 +8,12 @@ import time
 
 class GraylogInterface(_Interface.Interface):
 
+    interface_name = 'graylog'
+
     @property
     def enabled(self):
 
-        return self.collector.config['output', 'graylog', 'enabled']
+        return self.collector.config['output', self.interface_name, 'enabled']
 
     def _send_message(self, msg, retries=3, **kwargs):
         """
@@ -64,6 +66,6 @@ class GraylogInterface(_Interface.Interface):
         Return a socket connected to the Graylog input.
         """
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.connect((self.collector.config['output', 'graylog', 'address'],
-                   int(self.collector.config['output', 'graylog', 'port'])))
+        s.connect((self.collector.config['output', self.interface_name, 'address'],
+                   int(self.collector.config['output', self.interface_name, 'port'])))
         return s

@@ -1,12 +1,15 @@
 import collections
 import logging
 import threading
-import azure.core.exceptions
 from . import _Interface
-from azure.data.tables import TableServiceClient
+import azure.data.tables
+
+azure.data.tables._error.DecodeError
 
 
 class AzureTableInterface(_Interface.Interface):
+
+    interface_name = 'azureTable'
 
     def __init__(self, table_connection_string=None, **kwargs):
         """
@@ -23,7 +26,7 @@ class AzureTableInterface(_Interface.Interface):
     @property
     def enabled(self):
 
-        return self.collector.config['output', 'azureTable', 'enabled']
+        return self.collector.config['output', self.interface_name, 'enabled']
 
     @property
     def table_service(self):
@@ -31,7 +34,8 @@ class AzureTableInterface(_Interface.Interface):
         if not self._table_service:
             if not self.connection_string:
                 raise RuntimeError("Azure table output needs a connection string. Use --table-string to pass one.")
-            self._table_service = TableServiceClient.from_connection_string(conn_str=self.connection_string)
+            self._table_service = (
+                azure.data.tables.TableServiceClient.from_connection_string(conn_str=self.connection_string))
         return self._table_service
 
     @property
@@ -76,7 +80,7 @@ class AzureTableInterface(_Interface.Interface):
             }
             entity.update(msg)
             self.table_client.create_entity(entity)
-        except azure.core.exceptions.ResourceExistsError:
+        except azure.data.tables._error.ResourceExistsError:
             self.successfully_sent += 1
             return
         except Exception as e:

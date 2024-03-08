@@ -7,6 +7,8 @@ import pandas
 
 class FileInterface(_Interface.Interface):
 
+    interface_name = 'file'
+
     def __init__(self, **kwargs):
         """
         Interface to send logs to CSV file(s). Not every audit log has every possible column, so columns in the CSV
@@ -20,7 +22,7 @@ class FileInterface(_Interface.Interface):
     @property
     def enabled(self):
 
-        return self.collector.config['output', 'file', 'enabled']
+        return self.collector.config['output', self.interface_name, 'enabled']
 
     @property
     def total_cache_length(self):

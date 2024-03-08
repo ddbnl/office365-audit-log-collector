@@ -1,9 +1,10 @@
 from . import _Interface
 import logging
-from fluent import sender
 
 
 class FluentdInterface(_Interface.Interface):
+
+    interface_name = 'fluentd'
 
     def __init__(self, **kwargs):
 
@@ -13,27 +14,28 @@ class FluentdInterface(_Interface.Interface):
     @property
     def enabled(self):
 
-        return self.collector.config['output', 'fluentd', 'enabled']
+        return self.collector.config['output', self.interface_name, 'enabled']
 
     @property
     def address(self):
 
-        return self.collector.config['output', 'fluentd', 'address']
+        return self.collector.config['output', self.interface_name, 'address']
 
     @property
     def port(self):
 
-        return self.collector.config['output', 'fluentd', 'port']
+        return self.collector.config['output', self.interface_name, 'port']
 
     @property
     def tenant_name(self):
 
-        return self.collector.config['output', 'fluentd', 'tenantName']
+        return self.collector.config['output', self.interface_name, 'tenantName']
 
     @property
     def logger(self):
 
         if not self._logger:
+            from fluent import sender
             self._logger = sender.FluentSender('o365', host=self.address, port=int(self.port))
         return self._logger
 

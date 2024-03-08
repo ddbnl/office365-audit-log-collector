@@ -1,9 +1,10 @@
 from . import _Interface
 import collections
-from prtg.sensor.result import CustomSensorResult
 
 
 class PRTGInterface(_Interface.Interface):
+
+    interface_name = 'prtg'
 
     def __init__(self, **kwargs):
         """
@@ -15,11 +16,11 @@ class PRTGInterface(_Interface.Interface):
     @property
     def enabled(self):
 
-        return self.collector.config['output', 'prtg', 'enabled']
+        return self.collector.config['output', self.interface_name, 'enabled']
 
     def _send_message(self, msg, content_type, **kwargs):
 
-        for channel in self.collector.config['output', 'prtg', 'channels']:
+        for channel in self.collector.config['output', self.interface_name, 'channels']:
             if content_type not in channel['filters']:
                 continue
             self._filter_result(msg=msg, content_type=content_type, channel=channel)
@@ -32,9 +33,10 @@ class PRTGInterface(_Interface.Interface):
         self.results[channel['name']].append(msg)
 
     def output(self):
+        from prtg.sensor.result import CustomSensorResult
         try:
             csr = CustomSensorResult()
-            for channel in self.collector.config['output', 'prtg', 'channels']:
+            for channel in self.collector.config['output', self.interface_name, 'channels']:
                 if channel['name'] not in self.results:
                     self.results[channel['name']] = collections.deque()
             for channel_name, messages in self.results.items():

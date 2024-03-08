@@ -4,6 +4,8 @@ import threading
 
 class Interface(object):
 
+    interface_name = '_interface'  # Set in subclasses to indicate name used in config
+
     def __init__(self, collector, **kwargs):
 
         self.collector = collector
@@ -18,7 +20,7 @@ class Interface(object):
         Overload for each interface to point to the right setting in the config file.
         :return: Bool
         """
-        return self.collector.config['output', 'interface', 'enabled']
+        return self.collector.config['output', self.interface_name, 'enabled']
 
     def reset(self):
 

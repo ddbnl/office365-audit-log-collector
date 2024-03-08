@@ -56,7 +56,7 @@ class AuditLogSubscriber(ApiConnection.ApiConnection):
         if 200 <= status.status_code <= 299:
             logging.info('Successfully set sub status: {} > {}'.format(content_type, action))
         else:
-            raise RuntimeError("Unable to set sub status: {} > {}".format(content_type, action))
+            raise RuntimeError("Unable to set sub status: {}. Error: {}".format(content_type, status.text))
         status.close()
 
     def interactive(self):
