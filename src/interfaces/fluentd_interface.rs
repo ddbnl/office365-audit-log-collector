@@ -1,15 +1,10 @@
-use std::collections::HashMap;
-use std::path::Path;
 use std::time::SystemTime;
-use chrono::{DateTime, Duration, FixedOffset, NaiveDateTime, NaiveTime, Utc};
+use chrono::{DateTime, NaiveDateTime, Utc};
 use core::time;
-use csv::Writer;
-use futures::future::Lazy;
 use poston::{Client, Settings, WorkerPool};
-use serde_json::Value;
 use crate::config::Config;
-use crate::data_structures::Caches;
-use crate::interface::Interface;
+use crate::data_structures::{ArbitraryJson, Caches};
+use crate::interfaces::interface::Interface;
 
 pub struct FluentdInterface {
     config: Config,
@@ -38,22 +33,30 @@ impl FluentdInterface {
             pool,
         }
     }
+
+    fn get_tenant_name(&self) -> String {
+        self.config.output.fluentd.as_ref().unwrap().tenant_name.clone()
+    }
 }
 
 impl Interface for FluentdInterface {
-    fn send_logs(&mut self, cache: Caches) {
+    fn send_logs(&mut self, mut logs: Caches) {
 
-        let all_logs = cache.get_all();
+        let all_logs = logs.get_all();
         for logs in all_logs {
             for log in logs {
-                let time_string = log.get("CreationTime").unwrap().as_str().unwrap();
-                let time = NaiveDateTime::parse_from_str(
-                    time_string, "%Y-%m-%dT%H:%M:%S").unwrap();
-                let time_utc = DateTime::<Utc>::from_naive_utc_and_offset(time, Utc);
-                let timestamp = SystemTime::from(time_utc);
-                self.pool.send(self.config.output.fluentd.as_ref().unwrap().tenantName.clone(),
-                               log, timestamp).unwrap();
+                let timestamp = get_timestamp(log);
+                self.pool.send(self.get_tenant_name(), log, timestamp).unwrap();
             }
         }
     }
+}
+
+fn get_timestamp(log: &ArbitraryJson) -> SystemTime {
+
+    let time_string = log.get("CreationTime").unwrap().as_str().unwrap();
+    let time = NaiveDateTime::parse_from_str(
+        time_string, "%Y-%m-%dT%H:%M:%S").unwrap();
+    let time_utc = DateTime::<Utc>::from_naive_utc_and_offset(time, Utc);
+    SystemTime::from(time_utc)
 }

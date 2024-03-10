@@ -1,6 +1,6 @@
 [package]
-name = "OfficeAuditLogCollector"
-version = "0.1.0"
+name = "office_audit_log_collector"
+version = "2.5.0"
 edition = "2021"
 
 

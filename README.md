@@ -1,16 +1,34 @@
 # Anouncements:
 
-- I was asked to write an article for the Graylog community, giving a more detailed look at how to use
-this tool. If this might be useful to you, you can find it 
-[here](https://community.graylog.org/t/collecting-office365-azuread-audit-logs-using-office-audit-collector/23925).
+Due to a busy real life schedule I have noticed I am not able to support this tool as much as I want to.
+This has resulted in issues staying open for too long. In order to remedy this some radical changes were needed:
 
-- Also, shoutout to [Jetbrains](https://www.jetbrains.com/all/) 
-for sponsoring an all product license for their IDEs for this open source
-project. Much appreciated.
-- The 'resume' parameter has been deprecated. Sometimes logs are published to the API with a delay
-and this causes issues with the 'resume' parameter. In hindsight this parameter was a mistake. It now
-generates a warning when used, but in the future it will be removed. If you are using it, please consider
-setting it to 'false'. If you were using it to prevent duplicate logs, set 'skipKnownLogs' to true instead.
+
+#### Full Rust rewrite
+
+The engine was already rewritten in Rust for performance. Looking at the issues however, most crashes came from Pythons
+loose typing. Building in PyInstaller was also a drag due to some libs not playing nice with it. Now the entire tool has been
+rewritten in Rust, I'm hoping for more stability.
+
+#### Support only what is necessary
+
+Many interfaces and config options have become superfluous. For example, most Azure interfaces are now useless, as
+Azure Sentinel supports direct retrieval of audit logs. By including only the features that will actually be used in the
+rewrite, I'm hoping I'll be able to maintain the smaller codebase in my limited free time. The new interfaces are:
+- Csv file
+- Graylog
+- Fluentd
+
+If you were using an interface that was dropped, keep using the previous version and raise an issue asking for the 
+interface to be included. I don't mind writing an interface for one person, I only mind writing it for no one.
+
+#### Add container releases
+
+While binaries will still be available, the primary method of release should be containers. This will hopefully
+reduce the amount of questions people have regarding how to run the tool, as only the container and a config file will
+be necessary.
+
+
 
 # Office365 audit log collector
 
@@ -18,23 +36,16 @@ Collect/retrieve Office365, Azure and DLP audit logs, optionally filter them, th
 (see full list below).
 Onboarding is easy and takes only a few minutes (see 'Onboarding' section). There are Windows and Linux executables.
 Configuration is easy with a YAML config file (see the 'ConfigExamples' folder for reference).
-If you have any issues or questions, or requests for additional interfaces, feel free to create an issue in this repo.
-- The following Audit logs can be extracted:
+If you have any issues or questions, or requests for additional interfaces, feel free to create an issue in this repo. - The following Audit logs can be extracted:
   - Audit.General
   - Audit.AzureActiveDirectory
   - Audit.Exchange
   - Audit.SharePoint
   - DLP.All
 - The following outputs are supported:
-  - Azure Analytics Workspace (OMS)
-  - Azure Storage Table
-  - Azure Storage Blob
-  - PRTG Network Monitor
-  - ( Azure ) SQL server
   - Graylog (or any other source that accepts a simple socket connection)
   - Fluentd
   - CSV Local file
-  - Power BI (indirectly through SQL, CSV, Azure Tables or Azure Blob)
 
 Feel free to contribute other outputs if you happen to build any. Also open to any other useful pull requests!
 See the following link for more info on the management APIs: https://msdn.microsoft.com/en-us/office-365/office-365-management-activity-api-reference.
@@ -44,11 +55,10 @@ See the following link for more info on the management APIs: https://msdn.micros
 - Ad-lib log retrieval;
 - Scheduling regular execution to retrieve the full audit trail
 - Output to Graylog/fluentd for full audit trails in SIEM
-- Output to PRTG for alerts on audit logs
-- Output to (Azure) SQL / CSV for Power BI
 - Etc.
 
 ## Latest changes:
+- Full rust rewrite
 - Deprecated 'resume' parameter.
 - Added native timestamp field to logs for graylog output
 - Added fluentd support (thanks @owentl)
@@ -92,69 +102,20 @@ See the following link for more info on the management APIs: https://msdn.micros
     - Check 'ActivityFeed.Read'
     - Check 'ActivityFeed.ReadDlp'
     - Hit 'Add permissions'
-- Subscribe to audit log feeds of your choice
-  - Set 'autoSubscribe: True' in YAML config file to automate this.
-  - OR Use the '--interactive-subscriber' parameter when executing the collector to manually subscribe to the audit API's of your choice
 - You can now run the collector and retrieve logs. 
 
 
 ### Running the collector:
 
-You can schedule to run the executable with CRON or Task Scheduler. Alternatively, you can use the "schedule" option in
-the YAML config to run the executable once and have it schedule itself (see ConfigExamples/schedule.yaml).
-
+You can schedule to run the executable with CRON or Task Scheduler.
 To run the command-line executable use the following syntax:
 
-OfficeAuditLogCollector(.exe) %tenant_id% %client_key% %secret_key% --config %path/to/config.yaml%
+OfficeAuditLogCollector(.exe) --tenant-id %tenant_id% --client-id %client_key% --secret-key %secret_key% --config %path/to/config.yaml%
 
 To create a config file you can start with the 'fullConfig.yaml' from the ConfigExamples folder. This has all the 
 possible options and some explanatory comments. Cross-reference with a config example using the output(s) of your choice, and you
-should be set.
+should be set. Remember to remove (or comment out) all the outputs you do not intent to use.
 
-### (optional) Creating an Azure Log Analytics Workspace (OMS):
-
-If you are running this script to get audit events in an Azure Analytics Workspace you will need a Workspace ID and a shared key.
-- Create a workspace from "Create resource" in Azure (no configuration required);
-- Get the ID and key from "Agent management";
-- You do not need to prepare any tables or other settings.
-
-### (optional) Creating an Azure Table / Blob account:
-
-If you are running this script to get audit events in an Azure Table and/or Blob you will need a storage account and connection string:
-- Create a storage account from "Create resource" in Azure (no special configuration required);
-- Get the connection string from 'Access keys'
-- You do not need to prepare any tables or blob containers as they are created in the storage account if they do not exist.
-
-### (optional) Creating a PRTG sensor
-
-To run with PRTG you must create a sensor:
-- Copy the OfficeAuditLogCollector.exe executable to the "\Custom Sensors\EXE" sub folder of your PRTG installation
-- Create a device in PRTG with any host name (e.g. "Office Audit Logs")
-- Create a 'EXE/Script Advanced Sensor' on that device and choose the executable you just copied
-- Enter parameters, e.g.: "*tenant_id* *client_key* *secret_key* --config *full/path/to/config.yaml*" 
-(use full path, because PRTG will execute the script from a different working directory)
-- Copy the prtg.config from ConfigExamples and modify at least the channel names and filters for your needs.
-- Set the timeout of the script to something generous that suits the amount of logs you will retrieve. 
-Probably at least 300 seconds. Run the script manually first to check how long it takes.
-- Match the interval of the sensor to the amount of hours of logs to retrieve. If your interval is 1 hour, hoursToCollect
-in the config file should also be set to one hour.
-
-### (optional) Using ( Azure ) SQL
-
-If you are running this script to get audit events in an SQL database you will need an ODBC driver and a connection string
-- The collector uses PYODBC, which needs an ODBC driver, examples on how to install this:
-  - On windows: https://docs.microsoft.com/en-us/sql/connect/odbc/download-odbc-driver-for-sql-server?view=sql-server-ver15
-  - On Linux: https://docs.microsoft.com/en-us/sql/connect/odbc/linux-mac/installing-the-microsoft-odbc-driver-for-sql-server?view=sql-server-ver15#ubuntu17
-- Connection string might look like this: "Driver={ODBC Driver 17 for SQL Server};Server=tcp:mydatabase.com,1433;Database=mydatabase;Uid=myuser;Pwd=mypassword;Encrypt
-=yes;TrustServerCertificate=no;Connection Timeout=30;"
-- Use SQL example config and pass --sql-string parameter when running the collector with your connection string
-
-
-
-### (optional) Creating a Graylog input
-
-If you are running this script to get audit events in Graylog you will need to create a Graylog input.
-- Create a 'raw/plaintext TCP' input;
-- Enter the IP and port you want to receive the logs on (you can use these in the script);
-- All other settings can be left default.
-
+### Setting up the collector for Graylog:
+I wrote a full tutorial on the Graylog blog. You can find it
+[here](https://community.graylog.org/t/collecting-office365-azuread-audit-logs-using-office-audit-collector/23925).

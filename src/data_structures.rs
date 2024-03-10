@@ -1,26 +1,43 @@
 use futures::channel::mpsc::{Sender, Receiver};
 use std::collections::HashMap;
 use reqwest::header::HeaderMap;
-use serde_derive::{Deserialize};
+use serde_derive::Deserialize;
 use clap::Parser;
 use log::warn;
 use serde_json::Value;
 use crate::config::ContentTypesSubConfig;
 
 /// List of JSON responses (used to represent content blobs)
-pub type JsonList = Vec<HashMap<String, serde_json::Value>>;
+pub type ArbitraryJson = HashMap<String, Value>;
+pub type JsonList = Vec<ArbitraryJson>;
 
 
 #[derive(Default, Clone)]
 pub struct Caches {
-    general: Vec<HashMap<String, Value>>,
-    aad: Vec<HashMap<String, Value>>,
-    exchange: Vec<HashMap<String, Value>>,
-    sharepoint: Vec<HashMap<String, Value>>,
-    dlp: Vec<HashMap<String, Value>>,
+    pub general: JsonList,
+    pub aad: JsonList,
+    pub exchange: JsonList,
+    pub sharepoint: JsonList,
+    pub dlp: JsonList,
+    pub size: usize,
 }
 impl Caches {
-    pub fn insert(&mut self, log: HashMap<String, Value>, content_type: &String) {
+
+    pub fn full(&self) -> bool {
+        let size = self.general.len()
+            + self.aad.len()
+            + self.exchange.len()
+            + self.sharepoint.len()
+            + self.dlp.len();
+        size >= self.size
+    }
+
+    pub fn new(size: usize) -> Self {
+        let mut cache = Caches::default();
+        cache.size = size;
+        cache
+    }
+    pub fn insert(&mut self, log: ArbitraryJson, content_type: &String) {
         match content_type.as_str() {
             "Audit.General" => self.general.push(log),
             "Audit.AzureActiveDirectory" => self.aad.push(log),
@@ -31,7 +48,7 @@ impl Caches {
         }
     }
 
-    pub fn get_all_types(&self) -> [(String, &Vec<HashMap<String, Value>>); 5] {
+    pub fn get_all_types(&self) -> [(String, &JsonList); 5] {
         [
             ("Audit.General".to_string(), &self.general),
             ("Audit.AzureActiveDirectory".to_string(), &self.aad),
@@ -41,13 +58,13 @@ impl Caches {
         ]
     }
 
-    pub fn get_all(&self) -> [&Vec<HashMap<String, Value>>; 5] {
+    pub fn get_all(&mut self) -> [&mut JsonList; 5] {
         [
-            &self.general,
-            &self.aad,
-            &self.exchange,
-            &self.sharepoint,
-            &self.dlp
+            &mut self.general,
+            &mut self.aad,
+            &mut self.exchange,
+            &mut self.sharepoint,
+            &mut self.dlp
         ]
     }
 }
@@ -110,6 +127,7 @@ pub struct GetContentConfig {
 /// finished.
 pub struct MessageLoopConfig {
     pub status_rx: Receiver<StatusMessage>,
+    pub kill_rx: tokio::sync::mpsc::Receiver<bool>,
     pub stats_tx: Sender<(usize, usize, usize, usize)>,
     pub blobs_tx: Sender<(String, String)>,
     pub blob_error_rx: Receiver<(String, String)>,
@@ -140,7 +158,7 @@ impl RunStatistics {
 }
 
 
-#[derive(Parser, Debug)]
+#[derive(Parser, Debug, Clone)]
 #[command(version, about, long_about = None)]
 /// Collect audit logs from Office Management APIs.
 /// Complete all preparation steps in README.MD

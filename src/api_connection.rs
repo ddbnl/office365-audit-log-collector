@@ -1,92 +1,120 @@
 use std::collections::HashMap;
 use reqwest;
-use log::{debug, info, warn, error};
+use log::{debug, warn, error};
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap};
 use tokio;
 use serde_json;
-use chrono::{DateTime};
 use futures::{SinkExt, StreamExt};
 use futures::channel::mpsc::{Receiver, Sender};
-use crate::config::ContentTypesSubConfig;
-use crate::data_structures::{JsonList, StatusMessage, GetBlobConfig, GetContentConfig,
-                             AuthResult, ContentToRetrieve};
+use crate::config::Config;
+use crate::data_structures::{JsonList, StatusMessage, GetBlobConfig, GetContentConfig, AuthResult,
+                             ContentToRetrieve, CliArgs};
 
 
 /// Return a logged in API connection object. Use the Headers value to make API requests.
-pub fn get_api_connection(tenant_id: String, client_id: String, secret_key: String,
-                          publisher_id: String) -> ApiConnection {
+pub fn get_api_connection(args: CliArgs, config: Config) -> ApiConnection {
 
     let mut api = ApiConnection {
-        tenant_id,
-        client_id,
-        secret_key,
-        publisher_id,
+        args,
+        config,
         headers: HeaderMap::new(),
     };
     api.login();
     api
 }
+
+
 /// Abstraction of an API connection to Azure Management APIs. Can be used to login to the API
 /// which sets the headers. These headers can then be used to make authenticated requests.
 pub struct ApiConnection {
-    pub tenant_id: String,
-    pub client_id: String,
-    secret_key: String,
-    pub publisher_id: String,
+    pub args: CliArgs,
+    pub config: Config,
     pub headers: HeaderMap,
 }
 impl ApiConnection {
     /// Use tenant_id, client_id and secret_key to request a bearer token and store it in
     /// our headers. Must be called once before requesting any content.
     fn login(&mut self) {
-        let auth_url =
-            format!("https://login.microsoftonline.com/{}/oauth2/token",
-                    self.tenant_id.to_string());
+        let auth_url = format!("https://login.microsoftonline.com/{}/oauth2/token",
+                               self.args.tenant_id.to_string());
+
         let resource = "https://manage.office.com";
-        let params = [("grant_type", "client_credentials"), ("client_id", &self.client_id),
-            ("client_secret", &self.secret_key), ("resource", &resource)];
-        self.headers.insert(CONTENT_TYPE,
-                            "application/x-www-form-urlencoded".parse().unwrap());
+
+        let params = [
+            ("grant_type", "client_credentials"),
+            ("client_id", &self.args.client_id),
+            ("client_secret", &self.args.secret_key),
+            ("resource", &resource)];
+
+        self.headers.insert(CONTENT_TYPE, "application/x-www-form-urlencoded".parse().unwrap());
+
         let login_client = reqwest::blocking::Client::new();
         let json: AuthResult = login_client
             .post(auth_url)
             .headers(self.headers.clone())
             .form(&params)
             .send()
-            .unwrap()
+            .unwrap_or_else(|e| panic!("Could not send API login request: {}", e))
             .json()
-            .unwrap();
+            .unwrap_or_else(|e| panic!("Could not parse API login reply: {}", e));
+
         let token = format!("bearer {}", json.access_token);
         self.headers.insert(AUTHORIZATION, token.parse().unwrap());
     }
-}
 
+    fn get_base_url(&self) -> String {
+        format!("https://manage.office.com/api/v1.0/{}/activity/feed", self.args.tenant_id)
+    }
 
-/// Create a URL that can retrieve the first page of content for each passed content type. Each
-/// content type can have multiple runs specified. A run consists of a start- and end date to
-/// retrieve data for. Max. time span is 24, so if the user wants to retrieve for e.g. 72 hours,
-/// we need 3 runs of 24 hours each. The runs object looks like e.g.:
-/// Runs{Audit.Exchange: [(start_date, end_date), (start_date, end_date), (start_date, end_date)}
-pub fn create_base_urls(
-    content_types: ContentTypesSubConfig, tenant_id: String, publisher_id: String,
-    runs: HashMap<String, Vec<(String, String)>>) -> Vec<(String, String)> {
+    pub fn subscribe_to_feeds(&self) {
 
-    let mut urls_to_get: Vec<(String, String)> = Vec::new();
-    let content_to_get = content_types.get_content_type_strings();
-    for content_type in content_to_get {
-        let content_runs = runs.get(&content_type).unwrap();
-        for content_run in content_runs.into_iter() {
-            let (start_time, end_time) = content_run;
-            urls_to_get.push(
-                (content_type.to_string(),
-                 format!("https://manage.office.com/api/v1.0/{}/activity/feed/\
-                  subscriptions/content?contentType={}&startTime={}&endTime={}\
-                  &PublisherIdentifier={}",
-                         tenant_id, content_type, start_time, end_time, publisher_id)
-                ));
+        let content_types = self.config.collect.content_types.get_content_type_strings();
+
+        let client = reqwest::blocking::Client::new();
+        for content_type in content_types {
+            let url = format!("{}/subscriptions/start?contentType={}",
+                              self.get_base_url(),
+                              content_type
+            );
+            client
+                .post(url)
+                .headers(self.headers.clone())
+                .header("content-length", 0)
+                .send()
+                .unwrap_or_else(
+                    |e| panic!("Error setting feed subscription status  {}", e)
+                );
         }
     }
-    urls_to_get
+
+
+    /// Create a URL that can retrieve the first page of content for each passed content type. Each
+    /// content type can have multiple runs specified. A run consists of a start- and end date to
+    /// retrieve data for. Max. time span is 24, so if the user wants to retrieve for e.g. 72 hours,
+    /// we need 3 runs of 24 hours each. The runs object looks like e.g.:
+    /// Runs{Audit.Exchange: [(start_date, end_date), (start_date, end_date), (start_date, end_date)}
+    pub fn create_base_urls(&self, runs: HashMap<String, Vec<(String, String)>>) -> Vec<(String, String)> {
+
+        let mut urls_to_get: Vec<(String, String)> = Vec::new();
+        let content_to_get = self.config.collect.content_types.get_content_type_strings();
+        for content_type in content_to_get {
+            let content_runs = runs.get(&content_type).unwrap();
+            for content_run in content_runs.into_iter() {
+                let (start_time, end_time) = content_run;
+                urls_to_get.push(
+                    (content_type.to_string(),
+                     format!("{}/subscriptions/content?contentType={}&startTime={}&endTime={}\
+                      &PublisherIdentifier={}",
+                             self.get_base_url(),
+                             content_type,
+                             start_time,
+                             end_time,
+                             self.args.publisher_id)
+                    ));
+            }
+        }
+        urls_to_get
+    }
 }
 
 
@@ -149,7 +177,9 @@ async fn handle_blob_response(
             match blob_error_tx.send((content_type, url)).await {
                 Err(e) => {
                     error!("Could not resend failed blob, dropping it: {}", e);
-                    status_tx.send(StatusMessage::ErrorContentBlob).await.unwrap();
+                    status_tx.send(StatusMessage::ErrorContentBlob).await.unwrap_or_else(
+                        |e| panic!("Could not send status update, channel closed?: {}", e)
+                    );
                 },
                 _=> (),
             }
@@ -167,11 +197,15 @@ async fn handle_blob_response_paging(
     match next_or_not {
         Some(i) => {
             let new_url = i.to_str().unwrap().to_string();
-            blobs_tx.send((content_type.clone(), new_url)).await.unwrap();
+            blobs_tx.send((content_type.clone(), new_url)).await.unwrap_or_else(
+                |e| panic!("Could not send found blob, channel closed?: {}", e)
+            );
         },
         None => {
             status_tx.
-                send(StatusMessage::FinishedContentBlobs).await.unwrap();
+                send(StatusMessage::FinishedContentBlobs).await.unwrap_or_else(
+                    |e| panic!("Could not send status update, channel closed?: {}", e)
+            );
         }
     };
 }
@@ -206,8 +240,12 @@ async fn handle_blob_response_content_uris(
             let content_to_retrieve = ContentToRetrieve {
                 expiration, content_type: content_type.clone(), content_id, url};
 
-            content_tx.send(content_to_retrieve).await.unwrap();
-            status_tx.send(StatusMessage::FoundNewContentBlob).await.unwrap();
+            content_tx.send(content_to_retrieve).await.unwrap_or_else(
+                |e| panic!("Could not send found content, channel closed?: {}", e)
+            );
+            status_tx.send(StatusMessage::FoundNewContentBlob).await.unwrap_or_else(
+                |e| panic!("Could not send status update, channel closed?: {}", e)
+            );
         }
     };
 }
@@ -220,7 +258,9 @@ async fn handle_blob_response_error(
     match blob_error_tx.send((content_type, url)).await {
         Err(e) => {
             error!("Could not resend failed blob, dropping it: {}", e);
-            status_tx.send(StatusMessage::ErrorContentBlob).await.unwrap();
+            status_tx.send(StatusMessage::ErrorContentBlob).await.unwrap_or_else(
+                |e| panic!("Could not send status update, channel closed?: {}", e)
+            );
         },
         _=> (),
     }
@@ -262,7 +302,9 @@ async fn handle_content_response(
 
     match resp.text().await {
         Ok(json) => {
-            result_tx.send((json, content_to_retrieve)).await.unwrap();
+            result_tx.send((json, content_to_retrieve)).await.unwrap_or_else(
+                |e| panic!("Could not send status update, channel closed?: {}", e)
+            );
             status_tx.send(StatusMessage::RetrievedContentBlob).await.unwrap();
         }
         Err(e) => {
@@ -270,7 +312,9 @@ async fn handle_content_response(
             match content_error_tx.send(content_to_retrieve).await {
                 Err(e) => {
                     error!("Could not resend failed content, dropping it: {}", e);
-                    status_tx.send(StatusMessage::ErrorContentBlob).await.unwrap();
+                    status_tx.send(StatusMessage::ErrorContentBlob).await.unwrap_or_else(
+                        |e| panic!("Could not send status update, channel closed?: {}", e)
+                    );
                 },
                 _=> (),
             }
@@ -287,7 +331,9 @@ async fn handle_content_response_error(
         match content_error_tx.send(content_to_retrieve).await {
         Err(e) => {
             error!("Could not resend failed content, dropping it: {}", e);
-            status_tx.send(StatusMessage::ErrorContentBlob).await.unwrap();
+            status_tx.send(StatusMessage::ErrorContentBlob).await.unwrap_or_else(
+                |e| panic!("Could not send status update, channel closed?: {}", e)
+            );
         },
         _=> (),
     }

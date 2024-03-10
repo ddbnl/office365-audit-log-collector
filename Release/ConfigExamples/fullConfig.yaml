@@ -1,0 +1,38 @@
+log:  # Log settings. Debug will severely decrease performance
+  path: 'collector.log'
+  debug: False
+collect:  # Settings determining which audit logs to collect and how to do it
+  workingDir: ./ # Directory to save cache files in (known_logs, known_content, last_run). Default is dir where executable is located
+  contentTypes:
+    Audit.General: True
+    Audit.AzureActiveDirectory: True
+    Audit.Exchange: True
+    Audit.SharePoint: True
+    DLP.All: True
+  cacheSize: 500000  # Amount of logs to cache/batch until outputting, larger=faster but eats more memory
+  maxThreads: 50  # Maximum number of simultaneous threads retrieving logs
+  globalTimeout: 1  # Number of minutes before the process is forced to exit if still running (0 = no timeout). If you run e.g. every hour you could set this to 59, ensuring there will only be 1 active process.
+  retries: 3  # Times to retry retrieving a content blob if it fails
+  skipKnownLogs: True  # Remember retrieved log blobs, don't collect them twice
+  hoursToCollect: 24  # Look back this many hours for audit logs (max supported by Office API is 168)
+  filter:  # Only logs that match ALL filters for a content type are collected. Leave empty to collect all
+    Audit.General:
+    Audit.AzureActiveDirectory:
+    Audit.Exchange:
+    Audit.SharePoint:
+    DLP.All:
+output:  # Make sure to remove or comment out all outputs you do not intend to use
+  file:  # CSV output
+    enabled: False
+    separateByContentType: True  # Creates a separate CSV file for each content type, using file name from 'path' as a prefix
+    path: 'output.csv'
+    separator: ';'
+#  graylog:
+#    enabled: False
+#    address: localhost
+#    port: 5555
+#  fluentd:
+#    enabled: True
+#    tenantName: myorg
+#    address: localhost
+#    port: 5555
