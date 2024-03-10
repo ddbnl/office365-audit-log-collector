@@ -57,30 +57,6 @@ See the following link for more info on the management APIs: https://msdn.micros
 - Output to Graylog/fluentd for full audit trails in SIEM
 - Etc.
 
-## Latest changes:
-- Full rust rewrite
-- Deprecated 'resume' parameter.
-- Added native timestamp field to logs for graylog output
-- Added fluentd support (thanks @owentl)
-- Added Azure Blob and Azure Table outputs
-- Added SQL output for Power BI
-- Changed file to CSV output
-- Added PRTG output
-- Added filters
-- Added YAML config file
-- Added a GUI for Windows
-- Added executables for Windows and Linux
-- Added Azure Log Analytics Workspace OMS output
-- Added parameter to resume from last run time (use to not miss any logs when script hasn't run for a while)
-- Added parameter for amount of hours or days to go back and look for content
-- Integrated bug fixes from pull requests, thank you!
-  - Fix busy loop when connection problem by @furiel
-  - New urlencoding for client_secret by @kalimer0x00 
-- Fixed bug where script exited prematurely
-- Don't start graylog output unnecessarily
-- Fixed file output
-
-
 ## Instructions:
 
 ### Onboarding (one time only):
@@ -107,12 +83,7 @@ See the following link for more info on the management APIs: https://msdn.micros
 
 ### Running the collector:
 
-
 #### From container (recommended)
-
-### Running the collector:
-
-#### From a container (recommended)
 
 A prebuilt container is available. If you are on a machine with docker available,
 you can run the tool through following steps:
