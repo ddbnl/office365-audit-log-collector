@@ -101,7 +101,7 @@ impl Config {
                 };
                 if !invalidated {
                     known_content.insert(id.trim().to_string(), creation_time.trim().to_string());
-                } else {println!("SKIPPA: {}", line)}
+                }
             }
         }
         known_content

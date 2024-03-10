@@ -89,7 +89,6 @@ impl FileInterface {
             }
             let columns = get_all_columns(logs);
             let path = self.paths.get(&content_type).unwrap();
-            println!("HIER {}", path.clone());
             let mut wrt = Writer::from_path(path).unwrap();
             wrt.write_record(&columns).unwrap();
 
