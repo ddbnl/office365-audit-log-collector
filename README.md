@@ -107,7 +107,39 @@ See the following link for more info on the management APIs: https://msdn.micros
 
 ### Running the collector:
 
-You can schedule to run the executable with CRON or Task Scheduler.
+
+#### From container (recommended)
+
+### Running the collector:
+
+#### From a container (recommended)
+
+A prebuilt container is available. If you are on a machine with docker available,
+you can run the tool through following steps:
+
+1. Make sure a config file is available (see "/ConfigExamples" for details). Let's say the file is at "/configs/config.yaml"
+2. Run the following docker command:
+    - Note we create a volume (/config), binding the local config folder to the container
+    - We also mount a new volume (/app) that the collector can use to store known logs, so it can avoid duplicates
+```
+sudo docker run -d \
+  -v /configs:/configs \
+  --mount source=collector-volume,target=/app \
+  ghcr.io/ddbnl/office365-audit-log-collector:release \
+  --tenant-id "11111111-1111-1111-1111-111111111111" \
+  --client-id "11111111-1111-1111-1111-111111111111" \
+  --secret-key "1111111111111111111111111111111111" \
+  --config /configs/graylog.yaml
+
+```
+3. Now optionally create a CRON job or Task Scheduler task to run the container on a schedule
+
+#### From a custom container
+
+You can use "/Release/Dockerfile" as a starting point to create a custom container. The binary is located at 
+"/Release/Linux/OfficeAuditLogCollector"
+
+#### Direct From binary
 To run the command-line executable use the following syntax:
 
 OfficeAuditLogCollector(.exe) --tenant-id %tenant_id% --client-id %client_key% --secret-key %secret_key% --config %path/to/config.yaml%
@@ -115,6 +147,8 @@ OfficeAuditLogCollector(.exe) --tenant-id %tenant_id% --client-id %client_key% -
 To create a config file you can start with the 'fullConfig.yaml' from the ConfigExamples folder. This has all the 
 possible options and some explanatory comments. Cross-reference with a config example using the output(s) of your choice, and you
 should be set. Remember to remove (or comment out) all the outputs you do not intent to use.
+
+You can schedule to run the executable with CRON or Task Scheduler.
 
 ### Setting up the collector for Graylog:
 I wrote a full tutorial on the Graylog blog. You can find it
