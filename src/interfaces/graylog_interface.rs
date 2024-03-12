@@ -1,6 +1,7 @@
 use std::io::{ErrorKind, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::time::Duration;
+use async_trait::async_trait;
 use chrono::{DateTime, NaiveDateTime, Utc};
 use log::{warn};
 use serde_json::Value;
@@ -45,9 +46,10 @@ impl GraylogInterface {
     }
 }
 
+#[async_trait]
 impl Interface for GraylogInterface {
 
-    fn send_logs(&mut self, mut logs: Caches) {
+    async fn send_logs(&mut self, mut logs: Caches) {
 
         let mut all_logs = logs.get_all();
         for logs in all_logs.iter_mut() {

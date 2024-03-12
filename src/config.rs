@@ -221,6 +221,8 @@ pub struct OutputSubConfig {
     pub file: Option<FileOutputSubConfig>,
     pub graylog: Option<GraylogOutputSubConfig>,
     pub fluentd: Option<FluentdOutputSubConfig>,
+    #[serde(rename = "azureLogAnalytics")]
+    pub oms: Option<OmsOutputSubConfig>,
 }
 
 #[derive(Deserialize, Clone, Debug)]
@@ -243,4 +245,11 @@ pub struct FluentdOutputSubConfig {
     pub tenant_name: String,
     pub address: String,
     pub port: u16,
+}
+
+
+#[derive(Deserialize, Clone, Debug)]
+pub struct OmsOutputSubConfig {
+    #[serde(rename = "workspaceId")]
+    pub workspace_id: String,
 }

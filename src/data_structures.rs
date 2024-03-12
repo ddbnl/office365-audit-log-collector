@@ -93,11 +93,11 @@ pub struct ContentToRetrieve {
 /// Mainly used to keep track of which content still needs retrieving and which is finished, which
 /// is necessary for knowing when to terminate.
 pub enum StatusMessage {
-    BeingThrottled,
     FinishedContentBlobs,  // Finished getting all content blobs for e.g. Audit.Exchange
     FoundNewContentBlob,  // Found a new blob to retrieved
     RetrievedContentBlob, // Finished retrieving a new blob
     ErrorContentBlob, // Could not retrieve a blob
+    BeingThrottled,
 }
 
 /// Used by thread getting content blobs
@@ -189,6 +189,9 @@ pub struct CliArgs {
 
     #[arg(short, long, default_value = "")]
     pub sql_string: String,
+
+    #[arg(short, long, default_value = "")]
+    pub oms_key: String,
 
     #[arg(short, long, required = false)]
     pub interactive_subscriber: bool,

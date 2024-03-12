@@ -13,6 +13,7 @@ use crate::api_connection;
 use crate::api_connection::ApiConnection;
 use crate::config::{Config, ContentTypesSubConfig};
 use crate::data_structures::{ArbitraryJson, Caches, CliArgs, ContentToRetrieve, JsonList};
+use crate::interfaces::azure_oms_interface::OmsInterface;
 use crate::interfaces::interface::Interface;
 use crate::interfaces::file_interface::FileInterface;
 use crate::interfaces::fluentd_interface::FluentdInterface;
@@ -55,6 +56,9 @@ impl Collector {
         if config.output.graylog.is_some() {
             interfaces.push(Box::new(GraylogInterface::new(config.clone())));
         }
+        if config.output.oms.is_some() {
+            interfaces.push(Box::new(OmsInterface::new(config.clone(), args.oms_key.clone())));
+        }
 
         // Initialize collector threads
         let api = api_connection::get_api_connection(
@@ -94,7 +98,7 @@ impl Collector {
 
     /// Monitor all started content retrieval threads, processing results and terminating
     /// when all content has been retrieved (signalled by a final run stats message).
-    pub fn monitor(&mut self) {
+    pub async fn monitor(&mut self) {
 
         let start = Instant::now();
         loop {
@@ -106,12 +110,12 @@ impl Collector {
             }
             // Run stats are only returned when all content has been retrieved,
             // therefore this signals the end of the run.
-            if self.check_stats() {
+            if self.check_stats().await {
                 break
             }
 
             // Check if a log came in.
-            self.check_results();
+            self.check_results().await;
         }
         self.end_run();
     }
@@ -120,25 +124,25 @@ impl Collector {
         self.config.save_known_blobs(&self.known_blobs);
     }
 
-    fn check_results(&mut self) {
+    async fn check_results(&mut self) {
 
         if let Ok(Some((msg, content))) = self.result_rx.try_next() {
-            self.handle_content(msg, content);
+            self.handle_content(msg, content).await;
         }
     }
 
-    fn handle_content(&mut self, msg: String, content: ContentToRetrieve) {
+    async fn handle_content(&mut self, msg: String, content: ContentToRetrieve) {
         self.known_blobs.insert(content.content_id.clone(), content.expiration.clone());
         if let Ok(logs) = serde_json::from_str::<JsonList>(&msg) {
             for log in logs {
-                self.handle_log(log, &content);
+                self.handle_log(log, &content).await;
             }
         } else {
             warn!("Skipped log that could not be parsed: {}", content.content_id)
         }
     }
 
-    fn handle_log(&mut self, mut log: ArbitraryJson, content: &ContentToRetrieve) {
+    async fn handle_log(&mut self, mut log: ArbitraryJson, content: &ContentToRetrieve) {
 
         if let Some(filters) = self.filters.get(&content.content_type) {
             for (k, v) in filters.iter() {
@@ -154,17 +158,17 @@ impl Collector {
         self.cache.insert(log, &content.content_type);
         self.saved += 1;
         if self.cache.full() {
-            self.output();
+            self.output().await;
         }
     }
-    fn check_stats(&mut self) -> bool {
+    async fn check_stats(&mut self) -> bool {
 
         if let Ok(Some((found,
                         successful,
                         retried,
                         failed))) = self.stats_rx.try_next() {
 
-            self.output();
+            self.output().await;
             let output = self.get_output_string(
                 found,
                 successful,
@@ -180,15 +184,15 @@ impl Collector {
         }
     }
 
-    fn output(&mut self) {
+    async fn output(&mut self) {
 
         let mut cache = Caches::new(self.cache.size);
         swap(&mut self.cache, &mut cache);
         if self.interfaces.len() == 1 {
-            self.interfaces.get_mut(0).unwrap().send_logs(cache);
+            self.interfaces.get_mut(0).unwrap().send_logs(cache).await;
         } else {
             for interface in self.interfaces.iter_mut() {
-                interface.send_logs(cache.clone());
+                interface.send_logs(cache.clone()).await;
             }
         }
     }
@@ -287,7 +291,7 @@ fn initialize_channels(
         retries: config.collect.retries.unwrap_or(3),
         kill_rx,
     };
-    return (blob_config, content_config, message_loop_config, blobs_rx, content_rx, result_rx,
+    (blob_config, content_config, message_loop_config, blobs_rx, content_rx, result_rx,
             stats_rx, kill_tx)
 }
 
