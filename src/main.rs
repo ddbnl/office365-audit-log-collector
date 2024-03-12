@@ -9,11 +9,12 @@ mod config;
 mod interfaces;
 
 
-fn main() {
+#[tokio::main]
+async fn main() {
 
     let args = data_structures::CliArgs::parse();
     let config = Config::new(args.config.clone());
     let runs = config.get_needed_runs();
     let mut collector = Collector::new(args, config, runs);
-    collector.monitor();
+    collector.monitor().await;
 }

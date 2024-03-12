@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::path::Path;
+use async_trait::async_trait;
 use chrono::Utc;
 use csv::{Writer};
 use crate::config::Config;
@@ -101,8 +102,9 @@ impl FileInterface {
     }
 }
 
+#[async_trait]
 impl Interface for FileInterface {
-    fn send_logs(&mut self, logs: Caches) {
+    async fn send_logs(&mut self, logs: Caches) {
         if !self.separate_by_content_type() {
             self.send_logs_unified(logs);
         } else {

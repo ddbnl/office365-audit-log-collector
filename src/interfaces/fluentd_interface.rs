@@ -1,6 +1,7 @@
 use std::time::SystemTime;
 use chrono::{DateTime, NaiveDateTime, Utc};
 use core::time;
+use async_trait::async_trait;
 use poston::{Client, Settings, WorkerPool};
 use crate::config::Config;
 use crate::data_structures::{ArbitraryJson, Caches};
@@ -39,8 +40,9 @@ impl FluentdInterface {
     }
 }
 
+#[async_trait]
 impl Interface for FluentdInterface {
-    fn send_logs(&mut self, mut logs: Caches) {
+    async fn send_logs(&mut self, mut logs: Caches) {
 
         let all_logs = logs.get_all();
         for logs in all_logs {

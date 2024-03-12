@@ -1,0 +1,14 @@
+collect:
+  contentTypes:
+    Audit.General: True
+    Audit.AzureActiveDirectory: True
+    Audit.Exchange: True
+    Audit.SharePoint: True
+    DLP.All: True
+output:
+  azureLogAnalytics:
+    workspaceId: 11111111-1111-1111-1111-1111111111111
+    # Get shared key through AZ CLI:
+    # az monitor log-analytics workspace get-shared-keys --resource-group my-rg --workspace-name my-oms --query "primarySharedKey"
+    # Then run collector with:
+    # OfficeAuditLogCollector [...] --oms-key '12345'
