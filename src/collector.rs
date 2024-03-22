@@ -43,7 +43,7 @@ pub struct Collector {
 
 impl Collector {
 
-    pub fn new(args: CliArgs, config: Config, runs: HashMap<String, Vec<(String, String)>>) -> Collector {
+    pub async fn new(args: CliArgs, config: Config, runs: HashMap<String, Vec<(String, String)>>) -> Collector {
 
         // Initialize interfaces
         let mut interfaces: Vec<Box<dyn Interface>> = Vec::new();
@@ -63,8 +63,12 @@ impl Collector {
         // Initialize collector threads
         let api = api_connection::get_api_connection(
             args.clone(), config.clone()
-        );
-        api.subscribe_to_feeds();
+        ).await;
+        if let Err(e) = api.subscribe_to_feeds().await {
+            let msg = format!("Error subscribing to audit feeds: {}", e);
+            error!("{}", msg);
+            panic!("{}", msg);
+        }
 
         let known_blobs = config.load_known_blobs();
         let (result_rx, stats_rx, kill_tx) =
