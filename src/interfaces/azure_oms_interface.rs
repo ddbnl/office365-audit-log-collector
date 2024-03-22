@@ -4,7 +4,7 @@ use base64::prelude::BASE64_STANDARD;
 use chrono::Utc;
 use futures::{stream, StreamExt};
 use hmac::{Hmac, Mac};
-use log::warn;
+use log::{error, info, warn};
 use sha2::Sha256;
 use crate::config::Config;
 use crate::data_structures::Caches;
@@ -56,7 +56,7 @@ impl Interface for OmsInterface {
     async fn send_logs(&mut self, logs: Caches) {
         let client = reqwest::Client::new();
 
-        println!("SEND");
+        info!("Sending logs to OMS interface.");
         let mut requests = Vec::new();
         for (content_type, content_logs) in logs.get_all_types() {
             for log in content_logs.iter() {
@@ -75,33 +75,47 @@ impl Interface for OmsInterface {
             }
         }
 
+        let resource = "/api/logs";
+        let uri = format!("https://{}.ods.opinsights.azure.com{}?api-version=2016-04-01",
+                          self.config.output.oms.as_ref().unwrap().workspace_id, resource);
+
+        info!("URL for OMS calls will be: {}", uri);
         let calls = stream::iter(requests)
             .map(|(body, table_name, time_value, content_length)| {
                 let client = client.clone();
-                let rfc1123date = Utc::now().format("%a, %d %b %Y %H:%M:%S GMT");
+                let uri = uri.clone();
                 let method = "POST".to_string();
                 let content_type = "application/json".to_string();
-                let resource = "/api/logs".to_string();
-                let signature = self.build_signature(rfc1123date.to_string(), content_length,
-                                                     method.clone(), content_type.to_string(),
+                let rfc1123date = Utc::now().format("%a, %d %b %Y %H:%M:%S GMT").to_string(); 
+                let signature = self.build_signature(rfc1123date.clone(), content_length,
+                                                     method.clone(), content_type.clone(),
                                                      resource.to_string());
 
-
-                let uri = format!("https://{}.ods.opinsights.azure.com{}?api-version=2016-04-01",
-                                  self.config.output.oms.as_ref().unwrap().workspace_id, resource);
                 tokio::spawn(async move {
-                    let resp = client
+                    let result = client
                         .post(uri)
                         .header("content-type", "application/json")
                         .header("content-length", content_length)
                         .header("Authorization", signature)
                         .header("Log-Type", table_name)
-                        .header("x-ms-date", rfc1123date.to_string())
+                        .header("x-ms-date", rfc1123date.clone())
                         .header("time-generated-field", time_value)
                         .body(body)
                         .send()
-                        .await.unwrap();
-                    resp.bytes().await
+                        .await;
+                    match result {
+                        Ok(response) => {
+                            if !response.status().is_success() {
+                                match response.text().await {
+                                    Ok(text) => error!("Error response after sending log to OMS: {}", text),
+                                    Err(e) => error!("Error response after sending log to OMS, but could not parse response: {}", e),
+                                }
+                            }
+                        },
+                        Err(e) => {
+                            error!("Error send log to OMS: {}", e);
+                        }
+                    }
                 })
             })
             .buffer_unordered(10);

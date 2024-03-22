@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use reqwest;
-use log::{debug, warn, error};
+use log::{debug, warn, error, info};
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap};
 use tokio;
 use serde_json;
@@ -9,17 +9,19 @@ use futures::channel::mpsc::{Receiver, Sender};
 use crate::config::Config;
 use crate::data_structures::{JsonList, StatusMessage, GetBlobConfig, GetContentConfig, AuthResult,
                              ContentToRetrieve, CliArgs};
+use anyhow::Result;
+use serde_json::Value;
 
 
 /// Return a logged in API connection object. Use the Headers value to make API requests.
-pub fn get_api_connection(args: CliArgs, config: Config) -> ApiConnection {
+pub async fn get_api_connection(args: CliArgs, config: Config) -> ApiConnection {
 
     let mut api = ApiConnection {
         args,
         config,
         headers: HeaderMap::new(),
     };
-    api.login();
+    api.login().await;
     api
 }
 
@@ -34,7 +36,8 @@ pub struct ApiConnection {
 impl ApiConnection {
     /// Use tenant_id, client_id and secret_key to request a bearer token and store it in
     /// our headers. Must be called once before requesting any content.
-    fn login(&mut self) {
+    async fn login(&mut self) {
+        info!("Logging in to Office Management API.");
         let auth_url = format!("https://login.microsoftonline.com/{}/oauth2/token",
                                self.args.tenant_id.to_string());
 
@@ -48,43 +51,113 @@ impl ApiConnection {
 
         self.headers.insert(CONTENT_TYPE, "application/x-www-form-urlencoded".parse().unwrap());
 
-        let login_client = reqwest::blocking::Client::new();
-        let json: AuthResult = login_client
+        let login_client = reqwest::Client::new();
+        let result = login_client
             .post(auth_url)
             .headers(self.headers.clone())
             .form(&params)
             .send()
-            .unwrap_or_else(|e| panic!("Could not send API login request: {}", e))
-            .json()
-            .unwrap_or_else(|e| panic!("Could not parse API login reply: {}", e));
+            .await;
+        let response = match result {
+            Ok(response) => response,
+            Err(e) => {
+                let msg = format!("Could not send API login request: {}", e);
+                error!("{}", msg);
+                panic!("{}", msg);
+            }
+        };
+        if !response.status().is_success() {
+            let text = match response.text().await {
+                Ok(text) => text,
+                Err(e) => {
+                    let msg = format!("Received error response to API login, but could not parse response: {}", e);
+                    error!("{}", msg);
+                    panic!("{}", msg);
+                }
+            };
+            let msg = format!("Received error response to API login: {}", text);
+            error!("{}", msg);
+            panic!("{}", msg);
+        }
+        let json = match response.json::<AuthResult>().await {
+            Ok(json) => json,
+            Err(e) => {
+                let msg = format!("Could not parse API login reply: {}", e);
+                error!("{}", msg);
+                panic!("{}", msg);
+            }
+        };
 
         let token = format!("bearer {}", json.access_token);
         self.headers.insert(AUTHORIZATION, token.parse().unwrap());
+        info!("Successfully logged in to Office Management API.")
     }
 
     fn get_base_url(&self) -> String {
         format!("https://manage.office.com/api/v1.0/{}/activity/feed", self.args.tenant_id)
     }
 
-    pub fn subscribe_to_feeds(&self) {
+    pub async fn subscribe_to_feeds(&self) -> Result<()> {
 
-        let content_types = self.config.collect.content_types.get_content_type_strings();
+        info!("Subscribing to audit feeds.");
+        let mut content_types = self.config.collect.content_types.get_content_type_strings();
 
-        let client = reqwest::blocking::Client::new();
+        let client = reqwest::Client::new();
+        info!("Getting current audit feed subscriptions.");
+        let url = format!("{}/subscriptions/list", self.get_base_url());
+        let result: Vec<HashMap<String, Value>> = client
+            .get(url)
+            .headers(self.headers.clone())
+            .header("content-length", 0)
+            .send()
+            .await?
+            .json()
+            .await?;
+        for subscription in result {
+            let status = subscription
+                .get("status")
+                .expect("No status in JSON")
+                .as_str()
+                .unwrap()
+                .to_string()
+                .to_lowercase();
+            if status == "enabled" {
+                let content_type = subscription
+                    .get("contentType")
+                    .expect("No contentType in JSON")
+                    .as_str()
+                    .unwrap()
+                    .to_string()
+                    .to_lowercase();
+                if let Some(i) = content_types
+                    .iter()
+                    .position(|x| x.to_lowercase() == content_type) {
+                    info!("Already subscribed to feed {}", content_type);
+                    content_types.remove(i);
+                }
+            }
+        }
         for content_type in content_types {
             let url = format!("{}/subscriptions/start?contentType={}",
                               self.get_base_url(),
                               content_type
             );
-            client
+            debug!("Subscribing to {} feed.", content_type);
+            let response = client
                 .post(url)
                 .headers(self.headers.clone())
                 .header("content-length", 0)
                 .send()
-                .unwrap_or_else(
-                    |e| panic!("Error setting feed subscription status  {}", e)
-                );
+                .await?;
+            if !response.status().is_success() {
+                let text = response.text().await?;
+                let msg = format!("Received error response subscribing to audit feed {}: {}", content_type, text);
+                error!("{}", msg);
+                panic!("{}", msg);
+            }
         }
+        info!("All audit feeds subscriptions exist.");
+        Ok(())
     }
 
 

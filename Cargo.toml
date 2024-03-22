@@ -5,6 +5,7 @@ edition = "2021"
 
 
 [dependencies]
+anyhow = "1.0.81"
 log = "0.4.16"
 simple_logger = "4.3.3"
 chrono = "0.4.19"
@@ -23,3 +24,4 @@ base64 = "0.22.0"
 hmac = "0.12.1"
 sha2 = "0.10.8"
 async-trait = "0.1.77"
+simple-logging = "2.0.2"
