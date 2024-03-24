@@ -15,6 +15,7 @@ collect:  # Settings determining which audit logs to collect and how to do it
   retries: 3  # Times to retry retrieving a content blob if it fails
   skipKnownLogs: True  # Remember retrieved log blobs, don't collect them twice
   hoursToCollect: 24  # Look back this many hours for audit logs (max supported by Office API is 168)
+  duplicate: 1  # Amount of times to download each log, can be used for performance testing by inflating the number of logs to download. Default is 1
   filter:  # Only logs that match ALL filters for a content type are collected. Leave empty to collect all
     Audit.General:
     Audit.AzureActiveDirectory:

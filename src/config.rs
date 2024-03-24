@@ -37,14 +37,14 @@ impl Config {
         }
         for content_type in self.collect.content_types.get_content_type_strings() {
             runs.insert(content_type.clone(), vec!());
-            let mut  start_time = end_time - chrono::Duration::try_hours(hours_to_collect)
+            let mut start_time = end_time - chrono::Duration::try_hours(hours_to_collect)
                 .unwrap();
 
             while end_time - start_time > chrono::Duration::try_hours(24).unwrap() {
                 let split_end_time = start_time + chrono::Duration::try_hours(24)
                     .unwrap();
                 let formatted_start_time = start_time.format("%Y-%m-%dT%H:%M:%SZ").to_string();
-                let formatted_end_time = end_time.format("%Y-%m-%dT%H:%M:%SZ").to_string();
+                let formatted_end_time = split_end_time.format("%Y-%m-%dT%H:%M:%SZ").to_string();
                 runs.get_mut(&content_type).unwrap().push((formatted_start_time, formatted_end_time));
                 start_time = split_end_time;
             }
@@ -144,6 +144,7 @@ pub struct CollectSubConfig {
     #[serde(rename = "skipKnownLogs")]
     pub skip_known_logs: Option<bool>,
     pub filter: Option<FilterSubConfig>,
+    pub duplicate: Option<usize>,
 }
 #[derive(Deserialize, Copy, Clone, Debug)]
 pub struct ContentTypesSubConfig {
