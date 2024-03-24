@@ -23,9 +23,7 @@ use tokio_util::sync::CancellationToken;
 #[derive(Clone, Debug)]
 pub enum Event {
     Init,
-    Quit,
     Error,
-    Closed,
     Tick,
     Render,
     FocusGained,
@@ -63,6 +61,7 @@ pub enum Action {
     ScrollPageUp,
     ScrollPageDown,
     UpdateFoundBlobs(usize),
+    UpdateAwaitingBlobs(usize),
     UpdateSuccessfulBlobs(usize),
     UpdateErrorBlobs(usize),
     UpdateRetryBlobs(usize),
@@ -71,6 +70,8 @@ pub enum Action {
     RunProgress(u16),
     RunStarted,
     RunEnded,
+    RateLimited,
+    NotRateLimited,
     Quit,
     Render,
     None,
@@ -108,16 +109,6 @@ impl Tui {
 
     pub fn frame_rate(mut self, frame_rate: f64) -> Self {
         self.frame_rate = frame_rate;
-        self
-    }
-
-    pub fn mouse(mut self, mouse: bool) -> Self {
-        self.mouse = mouse;
-        self
-    }
-
-    pub fn paste(mut self, paste: bool) -> Self {
-        self.paste = paste;
         self
     }
 
@@ -232,18 +223,6 @@ impl Tui {
 
     pub fn cancel(&self) {
         self.cancellation_token.cancel();
-    }
-
-    pub fn suspend(&mut self) -> Result<()> {
-        self.exit()?;
-        #[cfg(not(windows))]
-        signal_hook::low_level::raise(signal_hook::consts::signal::SIGTSTP)?;
-        Ok(())
-    }
-
-    pub fn resume(&mut self) -> Result<()> {
-        self.enter()?;
-        Ok(())
     }
 
     pub async fn next(&mut self) -> Option<Event> {

@@ -1,7 +1,4 @@
 use std::cmp::max;
-use std::collections::HashMap;
-use std::mem::swap;
-use std::ops::Sub;
 use std::sync::Arc;
 use color_eyre::eyre::Result;
 use crossterm::event::KeyCode::Char;
@@ -14,7 +11,6 @@ use ratatui::style::Color;
 use ratatui::widgets::ListItem;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use anyhow::Result as AnyHowResult;
-use futures::StreamExt;
 use ratatui::style::palette::tailwind;
 use reqwest::header::HeaderMap;
 use tokio::sync::Mutex;
@@ -57,8 +53,10 @@ struct State {
     selected_list_max: usize,
     scroll_log: ScrollViewState,
     table_result: TableState,
+    table_result_colum_start: usize,
     found_blobs: usize,
     successful_blobs: usize,
+    awaiting_blobs: usize,
     error_blobs: usize,
     retry_blobs: usize,
     logs_retrieved: usize,
@@ -66,6 +64,7 @@ struct State {
     run_started: Option<Instant>,
     run_ended: Option<Instant>,
     run_progress: u16,
+    rate_limit: bool,
 }
 impl State {
     pub fn new(args: CliArgs,
@@ -92,15 +91,18 @@ impl State {
             selected_list_max: 2,
             scroll_log: ScrollViewState::default(),
             table_result: TableState::default(),
+            table_result_colum_start: 0,
             found_blobs: 0,
             error_blobs: 0,
             successful_blobs: 0,
+            awaiting_blobs: 0,
             retry_blobs: 0,
             logs_retrieved: 0,
             logs_retrieval_speeds: Vec::new(),
             run_started: None,
             run_ended: None,
             run_progress: 0,
+            rate_limit: false,
         }
     }
 }
@@ -118,7 +120,6 @@ pub async fn run(args: CliArgs, config: Config, mut log_rx: UnboundedReceiver<(S
     loop {
         let e = tui.next().await.unwrap();
         match e {
-            tui::Event::Quit => action_tx.send(Action::Quit)?,
             tui::Event::Tick => action_tx.send(Action::Tick)?,
             tui::Event::Render => action_tx.send(Action::Render)?,
             tui::Event::Key(_) => {
@@ -235,9 +236,9 @@ fn update(state: &mut State, action: Action, api: Arc<Mutex<ApiConnection>>) {
                 if let Some(index) = state.table_result.selected() {
                     if index < 1000 {
                         state.table_result.select(Some(index + 1));
-                    } else {
-                        state.table_result.select(Some(0))
                     }
+                } else {
+                    state.table_result.select(Some(0))
                 }
             } else {
                 state.selected_list = if state.selected_list >= state.selected_list_max {
@@ -250,9 +251,13 @@ fn update(state: &mut State, action: Action, api: Arc<Mutex<ApiConnection>>) {
         Action::HandleLeft => {
             if state.selected_block == SelectedBlock::Commands && state.selected_list == 2 {
                 let mut current = state.config.collect.duplicate.unwrap_or(1);
-                current = current.saturating_sub(current / 10);
+                current = current.saturating_sub(max(1, current / 10));
                 current = max(1, current);
                 state.config.collect.duplicate = Some(current);
+            } else if state.selected_block == SelectedBlock::Results {
+                if state.table_result_colum_start > 0 {
+                    state.table_result_colum_start -= 1;
+                }
             }
         },
         Action::HandleRight => {
@@ -260,6 +265,14 @@ fn update(state: &mut State, action: Action, api: Arc<Mutex<ApiConnection>>) {
                 let current = state.config.collect.duplicate.unwrap_or(1);
                 let increase = max(1, current / 10);
                 state.config.collect.duplicate = Some(current + increase);
+            } else if state.selected_block == SelectedBlock::Results {
+                let mut max_col = state.results.first().unwrap_or(&Vec::new()).len();
+                if max_col > 10 {
+                    max_col -= 10;
+                }
+                if state.table_result_colum_start < max_col {
+                    state.table_result_colum_start += 1;
+                }
             }
         },
         Action::ScrollPageUp => {
@@ -284,6 +297,9 @@ fn update(state: &mut State, action: Action, api: Arc<Mutex<ApiConnection>>) {
         Action::UpdateErrorBlobs(found) => {
             state.error_blobs = found;
         }
+        Action::UpdateAwaitingBlobs(found) => {
+            state.awaiting_blobs = found;
+        }
         Action::LogsRetrieved(found) => {
             state.logs_retrieved = found;
         }
@@ -299,6 +315,12 @@ fn update(state: &mut State, action: Action, api: Arc<Mutex<ApiConnection>>) {
         }
         Action::RunEnded => {
             state.run_ended = Some(Instant::now());
+        }
+        Action::RateLimited => {
+            state.rate_limit = true;
+        }
+        Action::NotRateLimited => {
+            state.rate_limit = false;
         }
         Action::ConnectApi => {
             state.api_connected = true;
@@ -455,14 +477,14 @@ fn ui(frame: &mut Frame, state: &mut State) {
     let mut commands_list_items = Vec::<ListItem>::new();
 
     commands_list_items.push(ListItem::new(Line::from(Span::styled(
-        "Connect API", Style::default().fg(Color::Magenta),
+        "Test API connection", Style::default().fg(Color::Magenta),
     ))));
     commands_list_items.push(ListItem::new(Line::from(Span::styled(
-        "Run Collector", Style::default().fg(Color::Magenta),
+        "Run Collector (using specified config)", Style::default().fg(Color::Magenta),
     ))));
     let duplicate = state.config.collect.duplicate.unwrap_or(1);
     commands_list_items.push(ListItem::new(Line::from(Span::styled(
-        format!("< Load test ({}x) >", duplicate), Style::default().fg(Color::Magenta),
+        format!("< Load test ({}x) > (use arrow keys to increase load)", duplicate), Style::default().fg(Color::Magenta),
     ))));
 
     let mut command_state = ListState::default().with_selected(Some(state.selected_list));
@@ -490,7 +512,6 @@ fn ui(frame: &mut Frame, state: &mut State) {
     }
 
     // Speed chart
-
     let chart_block = Block::default()
         .title(block::Title::from("Performance").alignment(Alignment::Center))
         .borders(Borders::ALL);
@@ -502,20 +523,11 @@ fn ui(frame: &mut Frame, state: &mut State) {
             .style(Style::default().magenta())
             .data(state.logs_retrieval_speeds.as_slice()),
     ];
-    let x_label_amount = state
-        .logs_retrieval_speeds
-        .last()
-        .unwrap_or(&(10.0, 0.0))
-        .0 as usize / 5;
-    let mut x_labels: Vec<Span> = Vec::new();
-    for x in 0..x_label_amount {
-        x_labels.push(Span::from((x * 5).to_string()));
-    }
+
     let x_axis = Axis::default()
-        .title("Time (seconds)".red())
         .style(Style::default().white())
         .bounds([0.0, state.logs_retrieval_speeds.last().unwrap_or(&(10.0, 0.0)).0])
-        .labels(x_labels.into());
+        .labels(vec![]);
 
     let top_speed = state.logs_retrieval_speeds
         .iter()
@@ -528,12 +540,11 @@ fn ui(frame: &mut Frame, state: &mut State) {
         Span::from(top_speed.to_string())
     );
     let y_axis = Axis::default()
-        .title("Y Axis".red())
+        .title("Logs per second".red())
         .style(Style::default().white())
-        .bounds([0.0, state.logs_retrieval_speeds.last().unwrap_or(&(0.0, 10.0)).1 + 100.0])
+        .bounds([0.0, top_speed as f64])
         .labels(y_labels);
 
-    // Create the chart and link all the parts together
     let chart = Chart::new(datasets)
         .block(chart_block)
         .x_axis(x_axis)
@@ -609,37 +620,23 @@ fn ui(frame: &mut Frame, state: &mut State) {
         .title_style(Style::new())
         .borders(Borders::ALL);
 
-    let mut status_list_items = Vec::<ListItem>::new();
-
-    let (connect_string, color) = if state.api_connected {
-        ("  API Connection: Connected".to_string(), Color::Green,)
-    } else {
-        ("  API Connection: Disconnected".to_string(), Color::Red,)
-    };
-    status_list_items.push(ListItem::new(Line::from(Span::styled(
-        connect_string, Style::default().fg(color),
-    ))));
-
-    status_list_items.push(ListItem::new(Line::from(Span::styled(
-        format!("  Blobs discovered:: {}", state.found_blobs), Style::default().fg(Color::LightBlue),
-    ))));
-    status_list_items.push(ListItem::new(Line::from(Span::styled(
-        format!("  Blobs Retrieved:: {}", state.successful_blobs), Style::default().fg(Color::Green),
-    ))));
-    status_list_items.push(ListItem::new(Line::from(Span::styled(
-        format!("  Blobs Retried:: {}", state.retry_blobs), Style::default().fg(Color::Yellow),
-    ))));
-    status_list_items.push(ListItem::new(Line::from(Span::styled(
-        format!("  Blobs Failed:: {}", state.error_blobs), Style::default().fg(Color::Red),
-    ))));
-
-    let list_wid = List::new(status_list_items)
-        .style(Style::new())
-        .highlight_symbol("  ")
+    let highest = *[state.found_blobs, state.successful_blobs, state.retry_blobs, state.error_blobs]
+        .iter()
+        .max()
+        .unwrap();
+    let bar = BarChart::default()
+        .block(Block::default().title("Run stats").borders(Borders::ALL))
+        .bar_width(10)
+        .data(BarGroup::default().bars(&[Bar::default().value(state.found_blobs as u64).style(Style::default().fg(Color::Blue)).label(Line::from("Found"))]))
+        .data(BarGroup::default().bars(&[Bar::default().value(state.successful_blobs as u64).style(Style::default().fg(Color::Green)).label(Line::from("Retrieved"))]))
+        .data(BarGroup::default().bars(&[Bar::default().value(state.retry_blobs as u64).style(Style::default().fg(Color::Yellow)).label(Line::from("Retried"))]))
+        .data(BarGroup::default().bars(&[Bar::default().value(state.error_blobs as u64).style(Style::default().fg(Color::Red)).label(Line::from("Error"))]))
+        .max(max(highest as u64, 10))
         .block(status_block);
 
-    frame.render_widget(list_wid, horizontal_1[1]);
+    frame.render_widget(bar, horizontal_1[1]);
 
+    // Progress
     let progress_block = Block::new()
         .title("Progress")
         .title_alignment(Alignment::Center)
@@ -647,7 +644,25 @@ fn ui(frame: &mut Frame, state: &mut State) {
         .borders(Borders::ALL);
     let mut progress_list_items = Vec::<ListItem>::new();
 
-    
+    let (connect_string, color) = if state.api_connected {
+        ("  API Connection: Connected".to_string(), Color::Green,)
+    } else {
+        ("  API Connection: Disconnected".to_string(), Color::Red,)
+    };
+    progress_list_items.push(ListItem::new(Line::from(Span::styled(
+        connect_string, Style::default().fg(color),
+    ))));
+
+    if state.rate_limit {
+        progress_list_items.push(ListItem::new(Line::from(Span::styled(
+            "  Being rate limited!", Style::default().fg(Color::Red).rapid_blink(),
+        ))));
+    } else {
+        progress_list_items.push(ListItem::new(Line::from(Span::styled(
+            "  Not rate limited", Style::default().fg(Color::Green),
+        ))));
+    }
+
     let elapsed = if let Some(elapsed) = state.run_started {
         
         let end = state.run_ended.unwrap_or(Instant::now());
@@ -661,11 +676,16 @@ fn ui(frame: &mut Frame, state: &mut State) {
             seconds,
         )
     } else {
-        "Not started".to_string()
+        "  Not started".to_string()
     };
     progress_list_items.push(ListItem::new(Line::from(Span::styled(
-        format!("Time elapsed: {}", elapsed), Style::default().fg(color),
+        format!("  Time elapsed: {}", elapsed), Style::default().fg(Color::LightBlue),
     ))));
+
+    progress_list_items.push(ListItem::new(Line::from(Span::styled(
+        format!("  Blobs remaining: {}", state.awaiting_blobs), Style::default().fg(Color::LightBlue),
+    ))));
+
     let progress_list = List::new(progress_list_items)
         .style(Style::new())
         .highlight_symbol("  ")
@@ -682,9 +702,9 @@ fn ui(frame: &mut Frame, state: &mut State) {
     let list_wid = List::new(logs_list_items)
         .style(Style::new())
         .highlight_symbol("  ");
-    let size = Size::new(frame.size().width - 2, 7);
+    let size = Size::new(1000, 1000);
     let mut scroll_view = ScrollView::new(size);
-    let area = Rect::new(0, 0, frame.size().width - 2, 7);
+    let area = Rect::new(0, 0, 1000 , 1000);
     scroll_view.render_widget(list_wid, area);
 
     let palette = tailwind::SLATE;
@@ -697,7 +717,7 @@ fn ui(frame: &mut Frame, state: &mut State) {
     let keys_bg = palette.c600;
     let title = Line::from(vec![
         "<L> Logs  ".into(),
-        "  ↓ | ↑ | PageDown | PageUp | Home | End  "
+        "| ↓ | ↑ | PageDown | PageUp |  "
             .fg(keys_fg)
             .bg(keys_bg),
     ])
@@ -709,14 +729,13 @@ fn ui(frame: &mut Frame, state: &mut State) {
     let mut results = state.results.clone();
     let mut header = if !results.is_empty() { results.remove(0) } else { Vec::new() };
     if header.len() > 10 {
-        header = header[0..10].to_vec();
+        header = header[state.table_result_colum_start..state.table_result_colum_start + 10].to_vec();
     }
     let rows: Vec<Row> = results
         .clone()
         .into_iter()
         .map(|mut x|{
-            let end = if x.len() > 10 { 10 } else { x.len() };
-            x = x[0..end].to_vec();
+            x = x[state.table_result_colum_start..state.table_result_colum_start + 10].to_vec();
             Row::new(x)
         })
         .collect();
@@ -724,9 +743,11 @@ fn ui(frame: &mut Frame, state: &mut State) {
         .rows(rows)
         .highlight_style(Style::new().add_modifier(Modifier::REVERSED))
         .highlight_symbol(">>")
-        .header(Row::new(header));
-
-
+        .header(Row::new(header)
+            .style(Style::new().bold().underlined())
+            .bottom_margin(1),
+        );
+    
 
     let palette = tailwind::SLATE;
     let (fg, bg) = if state.selected_block == SelectedBlock::Results {
@@ -738,7 +759,7 @@ fn ui(frame: &mut Frame, state: &mut State) {
     let keys_bg = palette.c600;
     let title = Line::from(vec![
         "<R> Results  ".into(),
-        "  ↓ | ↑ | PageDown | PageUp | Home | End  "
+        "  ↓ | ↑ | ← | → | "
             .fg(keys_fg)
             .bg(keys_bg),
     ])
@@ -784,8 +805,9 @@ async fn handle_enter_command(state: State, api: Arc<Mutex<ApiConnection>>) -> A
     Ok(())
 }
 
-async fn handle_enter_command_connect(mut state: State, api: Arc<Mutex<ApiConnection>>) -> AnyHowResult<()> {
+async fn handle_enter_command_connect(state: State, api: Arc<Mutex<ApiConnection>>) -> AnyHowResult<()> {
 
+    state.action_tx.send(Action::DisconnectApi).unwrap();
     if api.lock().await.headers.is_empty() {
         api.lock().await.login().await?;
     }
@@ -803,6 +825,8 @@ async fn handle_enter_command_run(state: State,
     let mut config = state.config.clone();
     if !load_test {
         config.collect.duplicate = Some(1);
+    } else {
+        config.collect.skip_known_logs = Some(false);
     }
     let runs = config.get_needed_runs();
     let run_state = Arc::new(Mutex::new(RunState::default()));
@@ -817,12 +841,23 @@ async fn handle_enter_command_run(state: State,
     let mut elapsed_since_data_point = Instant::now();
     let run_start = elapsed_since_data_point.clone();
     let mut logs_retrieved: usize = 0;
+    let mut rate_limited = false;
     loop {
         let stats = run_state.lock().await.stats;
+        state.action_tx.send(Action::UpdateAwaitingBlobs(run_state.lock().await.awaiting_content_blobs)).unwrap();
+        state.action_tx.send(Action::UpdateFoundBlobs(stats.blobs_found)).unwrap();
         state.action_tx.send(Action::UpdateFoundBlobs(stats.blobs_found)).unwrap();
         state.action_tx.send(Action::UpdateSuccessfulBlobs(stats.blobs_successful)).unwrap();
         state.action_tx.send(Action::UpdateErrorBlobs(stats.blobs_error)).unwrap();
         state.action_tx.send(Action::UpdateRetryBlobs(stats.blobs_retried)).unwrap();
+
+        if !rate_limited && run_state.lock().await.rate_limited {
+            rate_limited = true;
+            state.action_tx.send(Action::RateLimited).unwrap();
+        } else if rate_limited && !run_state.lock().await.rate_limited {
+            rate_limited = false;
+            state.action_tx.send(Action::NotRateLimited).unwrap();
+        }
 
         let progress = if stats.blobs_found > 0 {
             ((stats.blobs_found - stats.blobs_successful) / stats.blobs_found) * 100
@@ -831,13 +866,17 @@ async fn handle_enter_command_run(state: State,
         };
         state.action_tx.send(Action::RunProgress(progress as u16)).unwrap();
 
-        let done = collector.check_stats().await;
         logs_retrieved += collector.check_results().await;
+        let done = collector.check_stats().await;
         if done {
             logs_retrieved += collector.check_all_results().await;
             state.action_tx.send(Action::RunEnded).unwrap();
             state.action_tx.send(Action::RunProgress(100)).unwrap();
             state.action_tx.send(Action::LogsRetrieved(logs_retrieved)).unwrap();
+            state.action_tx.send(Action::UpdateFoundBlobs(stats.blobs_found)).unwrap();
+            state.action_tx.send(Action::UpdateSuccessfulBlobs(stats.blobs_successful)).unwrap();
+            state.action_tx.send(Action::UpdateErrorBlobs(stats.blobs_error)).unwrap();
+            state.action_tx.send(Action::UpdateRetryBlobs(stats.blobs_retried)).unwrap();
             break
         }
         state.action_tx.send(Action::LogsRetrieved(logs_retrieved)).unwrap();

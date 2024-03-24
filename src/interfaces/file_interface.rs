@@ -70,8 +70,11 @@ impl FileInterface {
             columns.append(&mut get_all_columns(content_type));
         }
 
+        let path = &self.config.output.file.as_ref().unwrap().path;
         let mut wrt =
-            Writer::from_path(&self.config.output.file.as_ref().unwrap().path).unwrap();
+            Writer::from_path(path).unwrap_or_else(
+                |e| panic!("Error in CSV interface: Could not write to path '{}': {}", path, e)
+            );
         wrt.write_record(&columns).unwrap();
         for logs in all_logs.iter_mut() {
             for log in logs.iter_mut() {
@@ -90,7 +93,9 @@ impl FileInterface {
             }
             let columns = get_all_columns(logs);
             let path = self.paths.get(&content_type).unwrap();
-            let mut wrt = Writer::from_path(path).unwrap();
+            let mut wrt = Writer::from_path(path).unwrap_or_else(
+                |e| panic!("Error in CSV interface: Could not write to path '{}': {}", path, e)
+            );
             wrt.write_record(&columns).unwrap();
 
             for log in logs {

@@ -1,18 +1,11 @@
-use std::io;
-use std::io::{IoSlice, Sink, Write};
-use std::mem::swap;
-use std::ops::Add;
 use std::sync::Arc;
 use clap::Parser;
-use crate::collector::{Collector, message_loop};
+use crate::collector::Collector;
 use crate::config::Config;
-use log::{error, info, Level, LevelFilter, log, Log, Metadata, Record};
-use simple_logger::SimpleLogger;
-use simple_logging::log_to;
-use simplelog::{CombinedLogger, SharedLogger};
+use log::{error, Level, LevelFilter, Log, Metadata, Record};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 use tokio::sync::Mutex;
-use crate::data_structures::{CliArgs, RunState};
+use crate::data_structures::RunState;
 use crate::interactive_mode::interactive;
 
 mod collector;
@@ -71,30 +64,23 @@ fn init_interactive_logging(config: &Config, log_tx: UnboundedSender<(String, Le
     } else {
         LevelFilter::Info
     };
-    let _ = CombinedLogger::init(
-        vec![
-            InteractiveLogger::new(log_tx, level),
-        ]
-    );
-
+    log::set_max_level(level);
+    log::set_boxed_logger(InteractiveLogger::new(log_tx)).unwrap();
 }
 
 
 pub struct  InteractiveLogger {
     log_tx: UnboundedSender<(String, Level)>,
-    level: LevelFilter,
-    config: simplelog::Config,
-    messages: Vec<String>,
 
 }
 impl InteractiveLogger {
-    pub fn new(log_tx: UnboundedSender<(String, Level)>, level: LevelFilter) -> Box<Self> {
-        Box::new(InteractiveLogger { log_tx, messages: Vec::new(), level, config: simplelog::Config::default() })
+    pub fn new(log_tx: UnboundedSender<(String, Level)>) -> Box<Self> {
+        Box::new(InteractiveLogger { log_tx })
     }
 }
 impl Log for InteractiveLogger {
     fn enabled(&self, metadata: &Metadata) -> bool {
-       true
+        metadata.level() <= Level::Info 
     }
     fn log(&self, record: &Record) {
 
@@ -109,16 +95,3 @@ impl Log for InteractiveLogger {
     fn flush(&self) {}
 }
 
-impl SharedLogger for InteractiveLogger {
-    fn level(&self) -> LevelFilter {
-        self.level
-    }
-
-    fn config(&self) -> Option<&simplelog::Config> {
-        Some(&self.config)
-    }
-
-    fn as_log(self: Box<Self>) -> Box<dyn Log> {
-        Box::new(*self)
-    }
-}

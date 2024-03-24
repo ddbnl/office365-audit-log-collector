@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::mem::swap;
 use std::ops::Div;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use anyhow::Result;
 use log::{warn, error, info};
 use futures::{SinkExt};
@@ -12,6 +12,7 @@ use futures::channel::mpsc::{Sender, Receiver};
 use serde_json::Value;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::Mutex;
+use tokio::time::sleep;
 use crate::data_structures;
 use crate::api_connection;
 use crate::api_connection::ApiConnection;
@@ -54,6 +55,7 @@ impl Collector {
                      interactive_sender: Option<UnboundedSender<Vec<String>>> 
     ) -> Result<Collector> {
 
+        info!("Initializing collector.");
         // Initialize interfaces
         let mut interfaces: Vec<Box<dyn Interface + Send>> = Vec::new();
         if args.interactive {
@@ -380,15 +382,28 @@ fn spawn_blob_collector(
 /// awaiting_content_blobs is incremented; every time content is retrieved or could not be
 /// retrieved awaiting_content_blobs is decremented. When it reaches 0 we know we are done.
 #[tokio::main]
-pub async fn message_loop(mut config: data_structures::MessageLoopConfig, mut state: Arc<Mutex<RunState>>) {
+pub async fn message_loop(mut config: data_structures::MessageLoopConfig,
+                          mut state: Arc<Mutex<RunState>>) {
 
     // Send base URLS for content blob retrieval then keep track of when they've all come in
     for (content_type, base_url) in config.urls.into_iter() {
         config.blobs_tx.clone().send((content_type, base_url)).await.unwrap();
         state.lock().await.awaiting_content_types += 1;
     }
+
+    let mut rate_limit_backoff_started: Option<Instant> = None;
+    let mut retry_map = HashMap::new();
     // Loop ends with the run itself, signalling the program is done.
     loop {
+
+        if let Some(t) = rate_limit_backoff_started {
+            if t.elapsed().as_secs() >= 30 {
+                rate_limit_backoff_started = None;
+                state.lock().await.rate_limited = false;
+                info!("Release rate limit");
+            }
+        }
+
 
         if let Ok(msg) = config.kill_rx.try_recv() {
             if msg {
@@ -440,28 +455,35 @@ pub async fn message_loop(mut config: data_structures::MessageLoopConfig, mut st
                         break;
                     }
                 }
-                data_structures::StatusMessage::BeingThrottled => warn!("Throttled!"),  // TODO: handle being throttled
+                data_structures::StatusMessage::BeingThrottled => {
+                    if rate_limit_backoff_started.is_none() {
+                        warn!("Being rate limited, backing off 30 seconds.");
+                        state.lock().await.rate_limited = true;
+                        rate_limit_backoff_started = Some(Instant::now());
+                    }
+                }
             }
         }
         // Check channel for content pages that could not be retrieved and retry them the user
         // defined amount of times. If we can't in that amount of times then give up.
         if let Ok(Some((content_type, url))) = config.blob_error_rx.try_next() {
-            if state.lock().await.retry_map.contains_key(&url) {
-                let retries = &mut state.lock().await.retry_map;
-                let retries_left = retries.get_mut(&url).unwrap();
+            if retry_map.contains_key(&url) {
+                let retries_left = retry_map.get_mut(&url).unwrap();
                 if retries_left == &mut 0 {
                     error!("Gave up on blob {}", url);
                     state.lock().await.awaiting_content_types -= 1;
                     state.lock().await.stats.blobs_error += 1;
                 } else {
-                    *retries_left -= 1;
+                    if rate_limit_backoff_started.is_none() {
+                        *retries_left -= 1;
+                    }
                     state.lock().await.stats.blobs_retried += 1;
                     warn!("Retry blob {} {}", retries_left, url);
                     config.blobs_tx.send((content_type, url)).await.unwrap();
 
                 }
             }  else {
-                state.lock().await.retry_map.insert(url.clone(), config.retries - 1);
+                retry_map.insert(url.clone(), config.retries - 1);
                 state.lock().await.stats.blobs_retried += 1;
                 warn!("Retry blob {} {}", config.retries - 1, url);
                 config.blobs_tx.send((content_type, url)).await.unwrap();
@@ -470,22 +492,22 @@ pub async fn message_loop(mut config: data_structures::MessageLoopConfig, mut st
         // Check channel for content blobs that could not be retrieved and retry them the user
         // defined amount of times. If we can't in that amount of times then give up.
         if let Ok(Some(content)) = config.content_error_rx.try_next() {
-            if state.lock().await.retry_map.contains_key(&content.url) {
-                let retries = &mut state.lock().await.retry_map;
-                let retries_left = retries.get_mut(&content.url).unwrap();
+            state.lock().await.stats.blobs_retried += 1;
+            if retry_map.contains_key(&content.url) {
+                let retries_left = retry_map.get_mut(&content.url).unwrap();
                 if retries_left == &mut 0 {
                     error!("Gave up on content {}", content.url);
                     state.lock().await.awaiting_content_blobs -= 1;
                     state.lock().await.stats.blobs_error += 1;
                 } else {
-                    *retries_left -= 1;
-                    state.lock().await.stats.blobs_retried += 1;
+                    if rate_limit_backoff_started.is_none() {
+                        *retries_left -= 1;
+                    }
                     warn!("Retry content {} {}", retries_left, content.url);
                     config.content_tx.send(content).await.unwrap();
-
                 }
             }  else {
-                state.lock().await.retry_map.insert(content.url.to_string(), config.retries - 1);
+                retry_map.insert(content.url.to_string(), config.retries - 1);
                 state.lock().await.stats.blobs_retried += 1;
                 warn!("Retry content {} {}", config.retries - 1, content.url);
                 config.content_tx.send(content).await.unwrap();
@@ -494,6 +516,7 @@ pub async fn message_loop(mut config: data_structures::MessageLoopConfig, mut st
     }
     // We send back stats after exiting the loop, signalling the end of the run.
     let stats = state.lock().await.stats.clone();
+    sleep(Duration::from_secs(3)).await;
     config.stats_tx.send((
         stats.blobs_found,
         stats.blobs_successful,

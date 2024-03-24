@@ -18,9 +18,18 @@ rewrite, I'm hoping I'll be able to maintain the smaller codebase in my limited 
 - Csv file
 - Graylog
 - Fluentd
+- Azure Log Analytics
 
 If you were using an interface that was dropped, keep using the previous version and raise an issue asking for the 
 interface to be included. I don't mind writing an interface for one person, I only mind writing it for no one.
+
+
+#### Interactive interface
+
+An interactive terminal interface was added, which allows testing the API connection, retrieving logs, and load testing
+by downloading each log an arbitrary number of times. This should allow live troubleshooting and testing, which might
+make solving issues easier. You can use it by running the collector as normal, only adding the '--interactive' command
+line parameter.
 
 #### Add container releases
 
@@ -31,6 +40,8 @@ be necessary.
 
 
 # Office365 audit log collector
+
+![Screenshot.jpg](Screenshot.jpg)
 
 Collect/retrieve Office365, Azure and DLP audit logs, optionally filter them, then send them to one or more outputs 
 (see full list below).

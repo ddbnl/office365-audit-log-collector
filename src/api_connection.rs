@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::time::Duration;
 use reqwest;
 use log::{debug, warn, error, info};
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap};
@@ -202,7 +203,7 @@ impl ApiConnection {
 /// next page of content. This is sent over the blobs_tx channel to retrieve as well. If no
 /// additional pages exist, a status message is sent to indicate all content blobs for this
 /// content type have been retrieved.
-#[tokio::main(flavor="multi_thread", worker_threads=200)]
+#[tokio::main(flavor="multi_thread", worker_threads=20)]
 pub async fn get_content_blobs(config: GetBlobConfig, blobs_rx: Receiver<(String, String)>,
                                known_blobs: HashMap<String, String>) {
 
@@ -210,7 +211,7 @@ pub async fn get_content_blobs(config: GetBlobConfig, blobs_rx: Receiver<(String
 
         let blobs_tx = config.blobs_tx.clone();
         let blob_error_tx = config.blob_error_tx.clone();
-        let status_tx = config.status_tx.clone();
+        let mut status_tx = config.status_tx.clone();
         let content_tx = config.content_tx.clone();
         let client = config.client.clone();
         let headers = config.headers.clone();
@@ -219,11 +220,24 @@ pub async fn get_content_blobs(config: GetBlobConfig, blobs_rx: Receiver<(String
         let known_blobs = known_blobs.clone();
         let duplicate = config.duplicate;
         async move {
-            match client.get(url.clone()).timeout(std::time::Duration::from_secs(5)).
-                headers(headers.clone()).send().await {
+            match client
+                .get(url.clone())
+                .timeout(Duration::from_secs(5))
+                .headers(headers.clone()).send().await {
                 Ok(resp) => {
-                    handle_blob_response(resp, blobs_tx, status_tx, content_tx, blob_error_tx,
-                    content_type, url, &known_blobs, duplicate).await;
+                    if resp.status().is_success() {
+                        handle_blob_response(resp, blobs_tx, status_tx, content_tx, blob_error_tx,
+                                             content_type, url, &known_blobs, duplicate).await;
+                    } else {
+                        if let Ok(text) = resp.text().await {
+                            if text.to_lowercase().contains("too many request") {
+                                status_tx.send(StatusMessage::BeingThrottled).await.unwrap();
+                            } else {
+                                error!("Err getting blob response {}", text);
+                            }
+                            handle_blob_response_error(status_tx, blob_error_tx, content_type, url).await;
+                        }
+                    }
                 },
                 Err(e) => {
                     error!("Err getting blob response {}", e);
@@ -247,14 +261,14 @@ async fn handle_blob_response(
 
     handle_blob_response_paging(&resp, blobs_tx, status_tx.clone(),
                                 content_type.clone()).await;
-    match resp.json::<Vec<HashMap<String, serde_json::Value>>>().await {
+    match resp.json::<Vec<HashMap<String, Value>>>().await {
         Ok(i) => {
             handle_blob_response_content_uris(status_tx, content_tx, content_type, i, known_blobs,
                                               duplicate)
                 .await;
         },
         Err(e) => {
-            warn!("Err getting blob JSON {}", e);
+            warn!("Error getting blob JSON {}", e);
             match blob_error_tx.send((content_type, url)).await {
                 Err(e) => {
                     error!("Could not resend failed blob, dropping it: {}", e);
@@ -357,8 +371,9 @@ async fn handle_blob_response_error(
 
 
 /// Retrieve the actual ContentUris found in the JSON body of content blobs.
-#[tokio::main(flavor="multi_thread", worker_threads=20)]
+#[tokio::main(flavor="multi_thread", worker_threads=50)]
 pub async fn get_content(config: GetContentConfig, content_rx: Receiver<ContentToRetrieve>) {
+
     content_rx.for_each_concurrent(config.threads, |content_to_retrieve| {
         let client = config.client.clone();
         let headers = config.headers.clone();
@@ -367,7 +382,10 @@ pub async fn get_content(config: GetContentConfig, content_rx: Receiver<ContentT
         let content_error_tx = config.content_error_tx.clone();
         async move {
             match client.get(content_to_retrieve.url.clone())
-                .timeout(std::time::Duration::from_secs(5)).headers(headers).send().await {
+                .timeout(Duration::from_secs(3))
+                .headers(headers)
+                .send()
+                .await {
                 Ok(resp) => {
                     handle_content_response(resp, result_tx, status_tx, content_error_tx,
                     content_to_retrieve).await;
@@ -379,7 +397,7 @@ pub async fn get_content(config: GetContentConfig, content_rx: Receiver<ContentT
             }
         }
     }).await;
-    debug!("Exit content thread");
+    info!("Exit content thread");
 }
 
 
@@ -391,8 +409,7 @@ async fn handle_content_response(
 
     if !resp.status().is_success() {
         match content_error_tx.send(content_to_retrieve).await {
-            Err(e) => {
-                error!("Could not resend failed content, dropping it: {}", e);
+            Err(_) => {
                 status_tx.send(StatusMessage::ErrorContentBlob).await.unwrap_or_else(
                     |e| panic!("Could not send status update, channel closed?: {}", e)
                 );
@@ -422,8 +439,7 @@ async fn handle_content_response(
         Err(e) => {
             warn!("Error interpreting JSON: {}", e);
             match content_error_tx.send(content_to_retrieve).await {
-                Err(e) => {
-                    error!("Could not resend failed content, dropping it: {}", e);
+                Err(_) => {
                     status_tx.send(StatusMessage::ErrorContentBlob).await.unwrap_or_else(
                         |e| panic!("Could not send status update, channel closed?: {}", e)
                     );
