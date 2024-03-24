@@ -12,7 +12,7 @@ pub type ArbitraryJson = HashMap<String, Value>;
 pub type JsonList = Vec<ArbitraryJson>;
 
 
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Debug)]
 pub struct Caches {
     pub general: JsonList,
     pub aad: JsonList,
@@ -81,7 +81,7 @@ pub struct AuthResult {
 /// Representation of content we need to retrieve. ID, expiration and content type are passed to
 /// python along with the retrieved content. ID an expiration are needed for avoiding known logs,
 /// content type for categorization in outputs.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ContentToRetrieve {
     pub content_type: String,
     pub content_id: String,
@@ -109,6 +109,7 @@ pub struct GetBlobConfig {
     pub blob_error_tx: Sender<(String, String)>,
     pub content_tx: Sender<ContentToRetrieve>,
     pub threads: usize,
+    pub duplicate: usize
 }
 
 
@@ -140,23 +141,22 @@ pub struct MessageLoopConfig {
 
 
 /// These stats to show to end-user.
+#[derive(Default, Copy, Clone, Debug)]
 pub struct RunStatistics {
     pub blobs_found: usize,
     pub blobs_successful: usize,
     pub blobs_error: usize,
     pub blobs_retried: usize,
 }
-impl RunStatistics {
-    pub fn new() -> RunStatistics {
-        RunStatistics {
-            blobs_found: 0,
-            blobs_successful: 0,
-            blobs_error: 0,
-            blobs_retried: 0
-        }
-    }
-}
 
+
+#[derive(Default, Clone)]
+pub struct RunState {
+    pub awaiting_content_types: usize,
+    pub awaiting_content_blobs: usize,
+    pub stats: RunStatistics,
+    pub rate_limited: bool,
+}
 
 #[derive(Parser, Debug, Clone)]
 #[command(version, about, long_about = None)]
@@ -166,33 +166,24 @@ impl RunStatistics {
 /// collection options (check the examples folder in the repo). Then run the tool with below options.
 pub struct CliArgs {
 
-    #[arg(long)]
+    #[arg(long, help = "ID of tenant to retrieve logs for.")]
     pub tenant_id: String,
 
-    #[arg(long)]
+    #[arg(long, help = "Client ID of app registration used to retrieve logs.")]
     pub client_id: String,
 
-    #[arg(long)]
+    #[arg(long, help = "Secret key of app registration used to retrieve logs")]
     pub secret_key: String,
 
-    #[arg(short, long, default_value = "12345678-1234-1234-1234-123456789123")]
+    #[arg(short, long, default_value = "12345678-1234-1234-1234-123456789123", help = "Publisher ID, set to tenant-id if left empty.")]
     pub publisher_id: String,
 
-    #[arg(long)]
+    #[arg(long, help = "Path to mandatory config file.")]
     pub config: String,
 
-    #[arg(short, long, default_value = "")]
-    pub table_string: String,
-
-    #[arg(short, long, default_value = "")]
-    pub blob_string: String,
-
-    #[arg(short, long, default_value = "")]
-    pub sql_string: String,
-
-    #[arg(short, long, default_value = "")]
+    #[arg(short, long, default_value = "", help = "Shared key for Azure Log Analytics Workspace.")]
     pub oms_key: String,
 
-    #[arg(short, long, required = false)]
-    pub interactive_subscriber: bool,
+    #[arg(short, long, required = false, help = "Interactive interface for (load) testing.")]
+    pub interactive: bool,
 }

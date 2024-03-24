@@ -70,8 +70,11 @@ impl FileInterface {
             columns.append(&mut get_all_columns(content_type));
         }
 
+        let path = &self.config.output.file.as_ref().unwrap().path;
         let mut wrt =
-            Writer::from_path(&self.config.output.file.as_ref().unwrap().path).unwrap();
+            Writer::from_path(path).unwrap_or_else(
+                |e| panic!("Error in CSV interface: Could not write to path '{}': {}", path, e)
+            );
         wrt.write_record(&columns).unwrap();
         for logs in all_logs.iter_mut() {
             for log in logs.iter_mut() {
@@ -90,7 +93,9 @@ impl FileInterface {
             }
             let columns = get_all_columns(logs);
             let path = self.paths.get(&content_type).unwrap();
-            let mut wrt = Writer::from_path(path).unwrap();
+            let mut wrt = Writer::from_path(path).unwrap_or_else(
+                |e| panic!("Error in CSV interface: Could not write to path '{}': {}", path, e)
+            );
             wrt.write_record(&columns).unwrap();
 
             for log in logs {
@@ -115,7 +120,7 @@ impl Interface for FileInterface {
 
 
 /// Get all column names in a heterogeneous collection of logs.
-fn get_all_columns(logs: &[ArbitraryJson]) -> Vec<String> {
+pub fn get_all_columns(logs: &[ArbitraryJson]) -> Vec<String> {
 
     let mut columns: Vec<String> = Vec::new();
     for log in logs.iter() {
@@ -130,7 +135,7 @@ fn get_all_columns(logs: &[ArbitraryJson]) -> Vec<String> {
 
 /// Due to heterogeneous logs not all logs have all columns. Fill missing columns of
 /// a log with an empty string.
-fn fill_log(log: &ArbitraryJson, columns: &Vec<String>) -> Vec<String> {
+pub fn fill_log(log: &ArbitraryJson, columns: &Vec<String>) -> Vec<String> {
     let mut new_log= Vec::new();
     for col in columns {
         if !log.contains_key(col) {

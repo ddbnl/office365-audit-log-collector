@@ -1,5 +1,4 @@
 collect:
-  skipKnownLogs: True
   workingDir: /app
   contentTypes:
     Audit.General: True

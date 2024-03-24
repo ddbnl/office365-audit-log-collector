@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::time::Duration;
 use reqwest;
 use log::{debug, warn, error, info};
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap};
@@ -9,25 +10,26 @@ use futures::channel::mpsc::{Receiver, Sender};
 use crate::config::Config;
 use crate::data_structures::{JsonList, StatusMessage, GetBlobConfig, GetContentConfig, AuthResult,
                              ContentToRetrieve, CliArgs};
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use serde_json::Value;
 
 
 /// Return a logged in API connection object. Use the Headers value to make API requests.
-pub async fn get_api_connection(args: CliArgs, config: Config) -> ApiConnection {
+pub async fn get_api_connection(args: CliArgs, config: Config) -> Result<ApiConnection> {
 
     let mut api = ApiConnection {
         args,
         config,
         headers: HeaderMap::new(),
     };
-    api.login().await;
-    api
+    api.login().await?;
+    Ok(api)
 }
 
 
 /// Abstraction of an API connection to Azure Management APIs. Can be used to login to the API
 /// which sets the headers. These headers can then be used to make authenticated requests.
+#[derive(Clone)]
 pub struct ApiConnection {
     pub args: CliArgs,
     pub config: Config,
@@ -36,7 +38,7 @@ pub struct ApiConnection {
 impl ApiConnection {
     /// Use tenant_id, client_id and secret_key to request a bearer token and store it in
     /// our headers. Must be called once before requesting any content.
-    async fn login(&mut self) {
+    pub async fn login(&mut self) -> Result<()> {
         info!("Logging in to Office Management API.");
         let auth_url = format!("https://login.microsoftonline.com/{}/oauth2/token",
                                self.args.tenant_id.to_string());
@@ -52,49 +54,70 @@ impl ApiConnection {
         self.headers.insert(CONTENT_TYPE, "application/x-www-form-urlencoded".parse().unwrap());
 
         let login_client = reqwest::Client::new();
-        let result = login_client
+        let response = login_client
             .post(auth_url)
             .headers(self.headers.clone())
             .form(&params)
             .send()
-            .await;
-        let response = match result {
-            Ok(response) => response,
-            Err(e) => {
-                let msg = format!("Could not send API login request: {}", e);
-                error!("{}", msg);
-                panic!("{}", msg);
-            }
-        };
+            .await?;
         if !response.status().is_success() {
-            let text = match response.text().await {
-                Ok(text) => text,
-                Err(e) => {
-                    let msg = format!("Received error response to API login, but could not parse response: {}", e);
-                    error!("{}", msg);
-                    panic!("{}", msg);
-                }
-            };
+            let text = response.text().await?;
             let msg = format!("Received error response to API login: {}", text);
             error!("{}", msg);
-            panic!("{}", msg);
+            return Err(anyhow!("{}", msg));
         }
-        let json = match response.json::<AuthResult>().await {
-            Ok(json) => json,
-            Err(e) => {
-                let msg = format!("Could not parse API login reply: {}", e);
-                error!("{}", msg);
-                panic!("{}", msg);
-            }
-        };
-
+        let json = response.json::<AuthResult>().await?;
         let token = format!("bearer {}", json.access_token);
         self.headers.insert(AUTHORIZATION, token.parse().unwrap());
-        info!("Successfully logged in to Office Management API.")
+        info!("Successfully logged in to Office Management API.");
+        Ok(())
     }
 
     fn get_base_url(&self) -> String {
         format!("https://manage.office.com/api/v1.0/{}/activity/feed", self.args.tenant_id)
+    }
+
+    pub async fn get_feeds(&self) -> Result<Vec<String>> {
+
+        let url = format!("{}/subscriptions/list", self.get_base_url());
+        let client = reqwest::Client::new();
+        let result: Vec<HashMap<String, Value>> = client
+            .get(url)
+            .headers(self.headers.clone())
+            .header("content-length", 0)
+            .send()
+            .await?
+            .json()
+            .await?;
+        Ok(result.iter()
+            .filter(|x| x.get("status").unwrap() == "enabled")
+            .map(|x|x.get("contentType").unwrap().as_str().unwrap().to_string())
+            .collect())
+    }
+
+    pub async fn set_subscription(&self, content_type: String, enable: bool) -> Result<()> {
+
+        let action = if enable { "start" } else { "stop" };
+        let url = format!("{}/subscriptions/{}?contentType={}",
+                          self.get_base_url(),
+                          action,
+                          content_type
+        );
+        debug!("Subscribing to {} feed.", content_type);
+        let client = reqwest::Client::new();
+        let response = client
+            .post(url)
+            .headers(self.headers.clone())
+            .header("content-length", 0)
+            .send()
+            .await?;
+        if !response.status().is_success() {
+            let text = response.text().await?;
+            let msg = format!("Received error response subscribing to audit feed {}: {}", content_type, text);
+            error!("{}", msg);
+            return Err(anyhow!("{}", msg))
+        }
+        Ok(())
     }
 
     pub async fn subscribe_to_feeds(&self) -> Result<()> {
@@ -138,23 +161,7 @@ impl ApiConnection {
             }
         }
         for content_type in content_types {
-            let url = format!("{}/subscriptions/start?contentType={}",
-                              self.get_base_url(),
-                              content_type
-            );
-            debug!("Subscribing to {} feed.", content_type);
-            let response = client
-                .post(url)
-                .headers(self.headers.clone())
-                .header("content-length", 0)
-                .send()
-                .await?;
-            if !response.status().is_success() {
-                let text = response.text().await?;
-                let msg = format!("Received error response subscribing to audit feed {}: {}", content_type, text);
-                error!("{}", msg);
-                panic!("{}", msg);
-            }
+            self.set_subscription(content_type, true).await?;
         }
         info!("All audit feeds subscriptions exist.");
         Ok(())
@@ -196,7 +203,7 @@ impl ApiConnection {
 /// next page of content. This is sent over the blobs_tx channel to retrieve as well. If no
 /// additional pages exist, a status message is sent to indicate all content blobs for this
 /// content type have been retrieved.
-#[tokio::main(flavor="multi_thread", worker_threads=200)]
+#[tokio::main(flavor="multi_thread", worker_threads=20)]
 pub async fn get_content_blobs(config: GetBlobConfig, blobs_rx: Receiver<(String, String)>,
                                known_blobs: HashMap<String, String>) {
 
@@ -204,19 +211,33 @@ pub async fn get_content_blobs(config: GetBlobConfig, blobs_rx: Receiver<(String
 
         let blobs_tx = config.blobs_tx.clone();
         let blob_error_tx = config.blob_error_tx.clone();
-        let status_tx = config.status_tx.clone();
+        let mut status_tx = config.status_tx.clone();
         let content_tx = config.content_tx.clone();
         let client = config.client.clone();
         let headers = config.headers.clone();
         let content_type = content_type.clone();
         let url = url.clone();
         let known_blobs = known_blobs.clone();
+        let duplicate = config.duplicate;
         async move {
-            match client.get(url.clone()).timeout(std::time::Duration::from_secs(5)).
-                headers(headers.clone()).send().await {
+            match client
+                .get(url.clone())
+                .timeout(Duration::from_secs(5))
+                .headers(headers.clone()).send().await {
                 Ok(resp) => {
-                    handle_blob_response(resp, blobs_tx, status_tx, content_tx, blob_error_tx,
-                    content_type, url, &known_blobs).await;
+                    if resp.status().is_success() {
+                        handle_blob_response(resp, blobs_tx, status_tx, content_tx, blob_error_tx,
+                                             content_type, url, &known_blobs, duplicate).await;
+                    } else {
+                        if let Ok(text) = resp.text().await {
+                            if text.to_lowercase().contains("too many request") {
+                                status_tx.send(StatusMessage::BeingThrottled).await.unwrap();
+                            } else {
+                                error!("Err getting blob response {}", text);
+                            }
+                            handle_blob_response_error(status_tx, blob_error_tx, content_type, url).await;
+                        }
+                    }
                 },
                 Err(e) => {
                     error!("Err getting blob response {}", e);
@@ -236,17 +257,18 @@ async fn handle_blob_response(
     resp: reqwest::Response, blobs_tx: Sender<(String, String)>,
     mut status_tx: Sender<StatusMessage>, content_tx: Sender<ContentToRetrieve>,
     mut blob_error_tx: Sender<(String, String)>, content_type: String, url: String,
-    known_blobs: &HashMap<String, String>) {
+    known_blobs: &HashMap<String, String>, duplicate: usize) {
 
     handle_blob_response_paging(&resp, blobs_tx, status_tx.clone(),
                                 content_type.clone()).await;
-    match resp.json::<Vec<HashMap<String, serde_json::Value>>>().await {
+    match resp.json::<Vec<HashMap<String, Value>>>().await {
         Ok(i) => {
-            handle_blob_response_content_uris(status_tx, content_tx, content_type, i, known_blobs)
+            handle_blob_response_content_uris(status_tx, content_tx, content_type, i, known_blobs,
+                                              duplicate)
                 .await;
         },
         Err(e) => {
-            warn!("Err getting blob JSON {}", e);
+            warn!("Error getting blob JSON {}", e);
             match blob_error_tx.send((content_type, url)).await {
                 Err(e) => {
                     error!("Could not resend failed blob, dropping it: {}", e);
@@ -288,7 +310,8 @@ async fn handle_blob_response_paging(
 /// over the content_tx channel for the content thread to retrieve.
 async fn handle_blob_response_content_uris(
     mut status_tx: Sender<StatusMessage>, mut content_tx: Sender<ContentToRetrieve>,
-    content_type: String, content_json: JsonList, known_blobs: &HashMap<String, String>) {
+    content_type: String, content_json: JsonList, known_blobs: &HashMap<String, String>,
+    duplicate: usize) {
 
     for json_dict in content_json.into_iter() {
         if json_dict.contains_key("contentUri") == false {
@@ -313,12 +336,19 @@ async fn handle_blob_response_content_uris(
             let content_to_retrieve = ContentToRetrieve {
                 expiration, content_type: content_type.clone(), content_id, url};
 
-            content_tx.send(content_to_retrieve).await.unwrap_or_else(
-                |e| panic!("Could not send found content, channel closed?: {}", e)
-            );
-            status_tx.send(StatusMessage::FoundNewContentBlob).await.unwrap_or_else(
-                |e| panic!("Could not send status update, channel closed?: {}", e)
-            );
+            if duplicate <= 1 {
+                content_tx.send(content_to_retrieve).await.unwrap_or_else(
+                    |e| panic!("Could not send found content, channel closed?: {}", e));
+                status_tx.send(StatusMessage::FoundNewContentBlob).await.unwrap_or_else(
+                    |e| panic!("Could not send status update, channel closed?: {}", e));
+            } else {
+                for _ in 0..duplicate {
+                    content_tx.send(content_to_retrieve.clone()).await.unwrap_or_else(
+                        |e| panic!("Could not send found content, channel closed?: {}", e));
+                    status_tx.send(StatusMessage::FoundNewContentBlob).await.unwrap_or_else(
+                        |e| panic!("Could not send status update, channel closed?: {}", e));
+                }
+            }
         }
     };
 }
@@ -341,8 +371,9 @@ async fn handle_blob_response_error(
 
 
 /// Retrieve the actual ContentUris found in the JSON body of content blobs.
-#[tokio::main(flavor="multi_thread", worker_threads=200)]
+#[tokio::main(flavor="multi_thread", worker_threads=50)]
 pub async fn get_content(config: GetContentConfig, content_rx: Receiver<ContentToRetrieve>) {
+
     content_rx.for_each_concurrent(config.threads, |content_to_retrieve| {
         let client = config.client.clone();
         let headers = config.headers.clone();
@@ -351,7 +382,10 @@ pub async fn get_content(config: GetContentConfig, content_rx: Receiver<ContentT
         let content_error_tx = config.content_error_tx.clone();
         async move {
             match client.get(content_to_retrieve.url.clone())
-                .timeout(std::time::Duration::from_secs(5)).headers(headers).send().await {
+                .timeout(Duration::from_secs(3))
+                .headers(headers)
+                .send()
+                .await {
                 Ok(resp) => {
                     handle_content_response(resp, result_tx, status_tx, content_error_tx,
                     content_to_retrieve).await;
@@ -363,7 +397,7 @@ pub async fn get_content(config: GetContentConfig, content_rx: Receiver<ContentT
             }
         }
     }).await;
-    debug!("Exit content thread");
+    info!("Exit content thread");
 }
 
 
@@ -372,6 +406,28 @@ async fn handle_content_response(
     resp: reqwest::Response, mut result_tx: Sender<(String, ContentToRetrieve)>,
     mut status_tx: Sender<StatusMessage>, mut content_error_tx: Sender<ContentToRetrieve>,
     content_to_retrieve: ContentToRetrieve) {
+
+    if !resp.status().is_success() {
+        match content_error_tx.send(content_to_retrieve).await {
+            Err(_) => {
+                status_tx.send(StatusMessage::ErrorContentBlob).await.unwrap_or_else(
+                    |e| panic!("Could not send status update, channel closed?: {}", e)
+                );
+            },
+            _=> (),
+        }
+        if let Ok(text) = resp.text().await {
+            if text.to_lowercase().contains("too many request") {
+                match status_tx.send(StatusMessage::BeingThrottled).await {
+                    Err(e) => {
+                        error!("Could not send status message: {}", e);
+                    },
+                    _=> (),
+                }
+            }
+        }
+        return
+    }
 
     match resp.text().await {
         Ok(json) => {
@@ -383,8 +439,7 @@ async fn handle_content_response(
         Err(e) => {
             warn!("Error interpreting JSON: {}", e);
             match content_error_tx.send(content_to_retrieve).await {
-                Err(e) => {
-                    error!("Could not resend failed content, dropping it: {}", e);
+                Err(_) => {
                     status_tx.send(StatusMessage::ErrorContentBlob).await.unwrap_or_else(
                         |e| panic!("Could not send status update, channel closed?: {}", e)
                     );
