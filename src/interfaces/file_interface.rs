@@ -115,7 +115,7 @@ impl Interface for FileInterface {
 
 
 /// Get all column names in a heterogeneous collection of logs.
-fn get_all_columns(logs: &[ArbitraryJson]) -> Vec<String> {
+pub fn get_all_columns(logs: &[ArbitraryJson]) -> Vec<String> {
 
     let mut columns: Vec<String> = Vec::new();
     for log in logs.iter() {
@@ -130,7 +130,7 @@ fn get_all_columns(logs: &[ArbitraryJson]) -> Vec<String> {
 
 /// Due to heterogeneous logs not all logs have all columns. Fill missing columns of
 /// a log with an empty string.
-fn fill_log(log: &ArbitraryJson, columns: &Vec<String>) -> Vec<String> {
+pub fn fill_log(log: &ArbitraryJson, columns: &Vec<String>) -> Vec<String> {
     let mut new_log= Vec::new();
     for col in columns {
         if !log.contains_key(col) {

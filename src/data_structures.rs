@@ -6,13 +6,14 @@ use clap::Parser;
 use log::warn;
 use serde_json::Value;
 use crate::config::ContentTypesSubConfig;
+use crate::data_structures;
 
 /// List of JSON responses (used to represent content blobs)
 pub type ArbitraryJson = HashMap<String, Value>;
 pub type JsonList = Vec<ArbitraryJson>;
 
 
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Debug)]
 pub struct Caches {
     pub general: JsonList,
     pub aad: JsonList,
@@ -81,7 +82,7 @@ pub struct AuthResult {
 /// Representation of content we need to retrieve. ID, expiration and content type are passed to
 /// python along with the retrieved content. ID an expiration are needed for avoiding known logs,
 /// content type for categorization in outputs.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ContentToRetrieve {
     pub content_type: String,
     pub content_id: String,
@@ -109,6 +110,7 @@ pub struct GetBlobConfig {
     pub blob_error_tx: Sender<(String, String)>,
     pub content_tx: Sender<ContentToRetrieve>,
     pub threads: usize,
+    pub duplicate: usize
 }
 
 
@@ -140,6 +142,7 @@ pub struct MessageLoopConfig {
 
 
 /// These stats to show to end-user.
+#[derive(Default, Copy, Clone, Debug)]
 pub struct RunStatistics {
     pub blobs_found: usize,
     pub blobs_successful: usize,
@@ -157,6 +160,14 @@ impl RunStatistics {
     }
 }
 
+
+#[derive(Default)]
+pub struct RunState {
+    pub awaiting_content_types: usize,
+    pub awaiting_content_blobs: usize,
+    pub retry_map: HashMap<String, usize>,
+    pub stats: RunStatistics,
+}
 
 #[derive(Parser, Debug, Clone)]
 #[command(version, about, long_about = None)]
@@ -194,5 +205,5 @@ pub struct CliArgs {
     pub oms_key: String,
 
     #[arg(short, long, required = false)]
-    pub interactive_subscriber: bool,
+    pub interactive: bool,
 }
