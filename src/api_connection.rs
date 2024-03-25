@@ -259,16 +259,33 @@ async fn handle_blob_response(
     mut blob_error_tx: Sender<(String, String)>, content_type: String, url: String,
     known_blobs: &HashMap<String, String>, duplicate: usize) {
 
-    handle_blob_response_paging(&resp, blobs_tx, status_tx.clone(),
-                                content_type.clone()).await;
-    match resp.json::<Vec<HashMap<String, Value>>>().await {
-        Ok(i) => {
-            handle_blob_response_content_uris(status_tx, content_tx, content_type, i, known_blobs,
-                                              duplicate)
-                .await;
+    handle_blob_response_paging(&resp, blobs_tx, status_tx.clone(), content_type.clone()).await;
+
+    match resp.text().await {
+        Ok(text) => {
+            match serde_json::from_str::<Vec<HashMap<String, Value>>>(text.as_str()) {
+                Ok(i) => {
+                    handle_blob_response_content_uris(status_tx, content_tx, content_type, i, known_blobs,
+                                                      duplicate)
+                        .await;
+                },
+                Err(e) => {
+                    warn!("Error getting blob JSON {}", e);
+                    debug!("Errored blob json content: {}", text);
+                    match blob_error_tx.send((content_type, url)).await {
+                        Err(e) => {
+                            error!("Could not resend failed blob, dropping it: {}", e);
+                            status_tx.send(StatusMessage::ErrorContentBlob).await.unwrap_or_else(
+                                |e| panic!("Could not send status update, channel closed?: {}", e)
+                            );
+                        },
+                        _=> (),
+                    }
+                }
+            }
         },
         Err(e) => {
-            warn!("Error getting blob JSON {}", e);
+            warn!("Error getting blob response text {}", e);
             match blob_error_tx.send((content_type, url)).await {
                 Err(e) => {
                     error!("Could not resend failed blob, dropping it: {}", e);
